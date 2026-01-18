@@ -89,9 +89,12 @@ docker_project_install() {
 
 # 安装 portainer-ce
 install_portainer() {
+    echo -e "${BRIGHT_GREEN}请输入外网访问端口（默认9000）："
+    read -p "端口: " port
+    port=${port:-9000}  # 如果用户没有输入，则使用默认端口 9000
     echo -e "${BRIGHT_GREEN}正在安装 portainer-ce...${NC}"
     docker run -d \
-      -p 9000:9000 \
+      -p $port:9000 \
       --name portainer \
       --restart=always \
       -v /var/run/docker.sock:/var/run/docker.sock \
@@ -101,10 +104,13 @@ install_portainer() {
 
 # 安装青龙容器
 install_qinglong() {
+    echo -e "${BRIGHT_GREEN}请输入外网访问端口（默认1997）："
+    read -p "端口: " port
+    port=${port:-1997}  # 如果用户没有输入，则使用默认端口 1997
     echo -e "${BRIGHT_GREEN}正在安装青龙容器(1997端口)...${NC}"
     docker run -dit \
        -v $PWD/ql/data:/ql/data \
-       -p 1997:5700 \
+       -p $port:5700 \
        --name qinglong \
        --hostname qinglong \
        --restart always \
