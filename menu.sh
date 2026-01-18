@@ -7,30 +7,39 @@ BLUE="\033[34m"
 RED="\033[31m"
 NC="\033[0m"  
 
+# 公告
+show_announcement() {
+    echo -e "${BLUE}====================${NC}"
+    echo -e "${BRIGHT_GREEN}公告：${NC}"
+    echo -e "${YELLOW}仅支持 Debian/Ubuntu 使用，请切换 root 执行，Docker 安装容器 OpenWrt 可用。${NC}"
+    echo -e "${BLUE}====================${NC}"
+}
+
 # 打印菜单
 show_menu() {
     echo -e "${BRIGHT_GREEN}请选择一个选项执行：${NC}"
     echo -e "${BLUE}====================${NC}"
     
     echo -e "${YELLOW}系统管理：${NC}"
-    echo -e "1: GNU/Linux 更换系统软件源"
-    echo -e "2: Docker 安装与换源"
-    echo -e "3: Docker 更换镜像加速器"
-    echo -e "4: Ubuntu/Debian 使用 root 登录 SSH"
-    echo -e "5: 设置系统时区"
-    echo -e "6: 安装 FTP 并使用 root 登录"
+    echo -e "1- GNU/Linux 更换系统软件源"
+    echo -e "2- Docker 安装与换源"
+    echo -e "3- Docker 更换镜像加速器"
+    echo -e "4- Ubuntu/Debian 使用 root 登录 SSH"
+    echo -e "5- 设置系统时区"
+    echo -e "6- 安装 FTP 并使用 root 登录"
     echo -e "${YELLOW}====================${NC}"
     
     echo -e "${YELLOW}工具安装：${NC}"
-    echo -e "7: 安装1panel面板"
-    echo -e "8: 安装lucky大吉"
+    echo -e "7- 安装1panel面板"
+    echo -e "8- 安装lucky大吉"
+    echo -e "9- 安装3-xui汉化版"
     echo -e "${YELLOW}====================${NC}"
     
     echo -e "${YELLOW}容器管理：${NC}"
-    echo -e "9: Docker 容器项目安装"
+    echo -e "10- Docker 容器项目安装"
     echo -e "${BLUE}====================${NC}"
     
-    echo -e "q: 退出"
+    echo -e "q- 退出"
     echo -e "${BLUE}====================${NC}"
 }
 
@@ -93,17 +102,25 @@ install_lucky() {
     curl -o /tmp/install.sh https://fastly.jsdelivr.net/gh/gdy666/lucky-files@main/golucky.sh && sh /tmp/install.sh https://fastly.jsdelivr.net/gh/gdy666/lucky-files@main 2.15.7
 }
 
+# 安装 3-xui汉化版
+install_3x_ui_cn() {
+    echo -e "${BRIGHT_GREEN}正在安装 3-xui 汉化版...${NC}"
+    bash <(curl -Ls https://raw.githubusercontent.com/xeefei/3x-ui/master/install.sh)
+}
+
 # 容器项目安装
 docker_project_install() {
     echo -e "${BRIGHT_GREEN}请选择一个容器项目安装选项：${NC}"
-    echo -e "1: 安装 portainer-ce"
-    echo -e "2: 安装青龙容器"
-    echo -e "q: 返回主菜单"
-    read -p "请输入选项 (1/2/q): " docker_choice
+    echo -e "1- 安装 portainer-ce"
+    echo -e "2- 安装青龙容器"
+    echo -e "3- 安装3-xui"
+    echo -e "q- 返回主菜单"
+    read -p "请输入选项 (1-3, q-返回): " docker_choice
 
     case $docker_choice in
         1) install_portainer ;;
         2) install_qinglong ;;
+        3) install_3x_ui ;;
         q) return ;;
         *) echo -e "${RED}无效选项，请重新输入。${NC}" ;;
     esac
@@ -139,10 +156,24 @@ install_qinglong() {
        whyour/qinglong:debian
 }
 
+# 安装 3-xui
+install_3x_ui() {
+    echo -e "${BRIGHT_GREEN}正在安装 3-xui 容器...${NC}"
+    docker run -itd \
+       -e XRAY_VMESS_AEAD_FORCED=false \
+       -v $PWD/3-xui/db/:/etc/x-ui/ \
+       -v $PWD/3-xui/cert/:/root/cert/ \
+       --network=host \
+       --restart=unless-stopped \
+       --name 3x-ui \
+       ghcr.io/xeefei/3x-ui:latest
+}
+
 # 主循环
 while true; do
+    show_announcement
     show_menu
-    read -p "请输入选项 (1/2/3/4/5/6/7/8/9/q): " choice
+    read -p "请输入选项 (1-10, q-退出): " choice
     case $choice in
         1) change_system_sources ;;
         2) install_docker ;;
@@ -152,7 +183,8 @@ while true; do
         6) install_ftp_root_login ;;
         7) install_1panel ;;
         8) install_lucky ;;
-        9) docker_project_install ;;
+        9) install_3x_ui_cn ;;
+        10) docker_project_install ;;
         q) echo -e "${BRIGHT_GREEN}退出程序。${NC}"; exit 0 ;;
         *) echo -e "${RED}无效选项，请重新输入。${NC}" ;;
     esac
