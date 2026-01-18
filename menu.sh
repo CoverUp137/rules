@@ -21,25 +21,29 @@ show_menu() {
     echo -e "${BLUE}====================${NC}"
     
     echo -e "${YELLOW}系统管理：${NC}"
-    echo -e "1- GNU/Linux 更换系统软件源"
-    echo -e "2- Docker 安装与换源"
-    echo -e "3- Docker 更换镜像加速器"
-    echo -e "4- Ubuntu/Debian 使用 root 登录 SSH"
-    echo -e "5- 设置系统时区"
-    echo -e "6- 安装 FTP 并使用 root 登录"
+    echo -e "1: GNU/Linux 更换系统软件源"
+    echo -e "2: Docker 安装与换源"
+    echo -e "3: Docker 更换镜像加速器"
+    echo -e "4: Ubuntu/Debian 使用 root 登录 SSH"
+    echo -e "5: 设置系统时区"
+    echo -e "6: 安装 FTP 并使用 root 登录"
     echo -e "${YELLOW}====================${NC}"
     
     echo -e "${YELLOW}工具安装：${NC}"
-    echo -e "7- 安装1panel面板"
-    echo -e "8- 安装lucky大吉"
-    echo -e "9- 安装3-xui汉化版"
+    echo -e "7: 安装1panel面板"
+    echo -e "8: 安装lucky大吉"
+    echo -e "9: 安装3-xui汉化版"
     echo -e "${YELLOW}====================${NC}"
     
     echo -e "${YELLOW}容器管理：${NC}"
-    echo -e "10- Docker 容器项目安装"
+    echo -e "10: Docker 容器项目安装"
     echo -e "${BLUE}====================${NC}"
     
-    echo -e "q- 退出"
+    echo -e "${YELLOW}PVE虚拟机：${NC}"
+    echo -e "11: 安装pve_source"
+    echo -e "${BLUE}====================${NC}"
+    
+    echo -e "q: 退出"
     echo -e "${BLUE}====================${NC}"
 }
 
@@ -111,11 +115,11 @@ install_3x_ui_cn() {
 # 容器项目安装
 docker_project_install() {
     echo -e "${BRIGHT_GREEN}请选择一个容器项目安装选项：${NC}"
-    echo -e "1- 安装 portainer-ce"
-    echo -e "2- 安装青龙容器"
-    echo -e "3- 安装3-xui"
-    echo -e "q- 返回主菜单"
-    read -p "请输入选项 (1-3, q-返回): " docker_choice
+    echo -e "1: 安装 portainer-ce"
+    echo -e "2: 安装青龙容器"
+    echo -e "3: 安装3-xui"
+    echo -e "q: 返回主菜单"
+    read -p "请输入选项 (1-+3, q:返回): " docker_choice
 
     case $docker_choice in
         1) install_portainer ;;
@@ -169,11 +173,18 @@ install_3x_ui() {
        ghcr.io/xeefei/3x-ui:latest
 }
 
+# 安装pve_source
+install_pve_source() {
+    echo -e "${BRIGHT_GREEN}正在安装pve_source...${NC}"
+    wget -q -O /root/pve_source.tar.gz 'https://bbs.x86pi.cn/file/topic/2024-01-06/file/24f723efc6ab4913b1f99c97a1d1a472b2.gz' && tar zxvf /root/pve_source.tar.gz && /root/./pve_source
+    echo -e "${BRIGHT_GREEN}pve_source安装完成。${NC}"
+}
+
 # 主循环
 while true; do
     show_announcement
     show_menu
-    read -p "请输入选项 (1-10, q-退出): " choice
+    read -p "请输入选项 (1-11, q:退出): " choice
     case $choice in
         1) change_system_sources ;;
         2) install_docker ;;
@@ -185,6 +196,7 @@ while true; do
         8) install_lucky ;;
         9) install_3x_ui_cn ;;
         10) docker_project_install ;;
+        11) install_pve_source ;;
         q) echo -e "${BRIGHT_GREEN}退出程序。${NC}"; exit 0 ;;
         *) echo -e "${RED}无效选项，请重新输入。${NC}" ;;
     esac
