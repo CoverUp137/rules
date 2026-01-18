@@ -11,7 +11,10 @@ NC="\033[0m"
 show_announcement() {
     echo -e "${BLUE}====================${NC}"
     echo -e "${BRIGHT_GREEN}公告：${NC}"
-    echo -e "${YELLOW}仅支持 Debian/Ubuntu 使用，\n请切换 root 执行，\nDocker 安装容器 OpenWrt 可用。${NC}"
+    cat << EOF
+${YELLOW}仅支持 Debian/Ubuntu 使用，请切换 root 执行
+Docker 安装容器 OpenWrt 可用。${NC}
+EOF
     echo -e "${BLUE}====================${NC}"
 }
 
