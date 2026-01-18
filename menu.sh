@@ -7,44 +7,92 @@ BLUE="\033[34m"
 RED="\033[31m"
 NC="\033[0m"  
 
-# 公告
-show_announcement() {
+
+# 选择系统类型
+select_system_type() {
+    echo -e "${BRIGHT_GREEN}请选择您的系统类型：${NC}"
     echo -e "${BLUE}====================${NC}"
-    echo -e "${BRIGHT_GREEN}公告：${NC}"
-    echo -e "${YELLOW}仅支持 Debian/Ubuntu 使用，请切换 root 执行${NC}"
-    echo -e "${YELLOW}部分功能OpenWrt 可用。${NC}"
+    echo -e "1: Debian/Ubuntu 系统"
+    echo -e "2: OpenWrt 系统"
     echo -e "${BLUE}====================${NC}"
-}
-# 打印菜单
-show_menu() {
-    echo -e "${BRIGHT_GREEN}请选择一个选项执行：${NC}"
-    echo -e "${BLUE}====================${NC}"
-    
-    echo -e "${YELLOW}系统管理：${NC}"
-    echo -e "1: GNU/Linux 更换系统软件源"
-    echo -e "2: Docker 安装与换源"
-    echo -e "3: Docker 更换镜像加速器"
-    echo -e "4: Ubuntu/Debian 使用 root 登录 SSH"
-    echo -e "5: 设置系统时区"
-    echo -e "6: 安装 FTP 并使用 root 登录"
-    echo -e "${YELLOW}====================${NC}"
-    
-    echo -e "${YELLOW}工具安装：${NC}"
-    echo -e "7: 安装1panel面板"
-    echo -e "8: 安装lucky大吉"
-    echo -e "9: 安装3-xui汉化版"
-    echo -e "${YELLOW}====================${NC}"
-    
-    echo -e "${YELLOW}容器管理：${NC}"
-    echo -e "10: Docker 容器项目安装"
-    echo -e "${BLUE}====================${NC}"
-    
-    echo -e "${YELLOW}PVE虚拟机：${NC}"
-    echo -e "11: 安装pve_source"
-    echo -e "${BLUE}====================${NC}"
-    
     echo -e "q: 退出"
     echo -e "${BLUE}====================${NC}"
+    
+    read -p "请输入选项 (1-2, q:退出): " system_choice
+    case $system_choice in
+        1) debian_ubuntu_menu ;;
+        2) openwrt_menu ;;
+        q) echo -e "${BRIGHT_GREEN}退出程序。${NC}"; exit 0 ;;
+        *) echo -e "${RED}无效选项，请重新输入。${NC}"; select_system_type ;;
+    esac
+}
+
+# Debian/Ubuntu 主菜单
+debian_ubuntu_menu() {
+    while true; do
+        echo -e "${BRIGHT_GREEN}Debian/Ubuntu 系统管理菜单${NC}"
+        echo -e "${BLUE}====================${NC}"
+        
+        echo -e "${YELLOW}系统管理：${NC}"
+        echo -e "1: GNU/Linux 更换系统软件源"
+        echo -e "2: Docker 安装与换源"
+        echo -e "3: Docker 更换镜像加速器"
+        echo -e "4: Ubuntu/Debian 使用 root 登录 SSH"
+        echo -e "5: 设置系统时区"
+        echo -e "6: 安装 FTP 并使用 root 登录"
+        echo -e "${YELLOW}====================${NC}"
+        
+        echo -e "${YELLOW}工具安装：${NC}"
+        echo -e "7: 安装1panel面板"
+        echo -e "8: 安装lucky大吉"
+        echo -e "9: 安装3-xui汉化版"
+        echo -e "${YELLOW}====================${NC}"
+        
+        echo -e "${YELLOW}容器管理：${NC}"
+        echo -e "10: Docker 容器项目安装"
+        echo -e "${BLUE}====================${NC}"
+        
+        echo -e "${YELLOW}PVE虚拟机：${NC}"
+        echo -e "11: 安装pve_source"
+        echo -e "${BLUE}====================${NC}"
+        
+        echo -e "b: 返回系统选择"
+        echo -e "q: 退出程序"
+        echo -e "${BLUE}====================${NC}"
+        
+        read -p "请输入选项 (1-11, b:返回, q:退出): " choice
+        case $choice in
+            1) change_system_sources ;;
+            2) install_docker ;;
+            3) change_docker_registry ;;
+            4) enable_root_ssh ;;
+            5) set_system_timezone ;;
+            6) install_ftp_root_login ;;
+            7) install_1panel ;;
+            8) install_lucky ;;
+            9) install_3x_ui_cn ;;
+            10) docker_project_install ;;
+            11) install_pve_source ;;
+            b) return ;;
+            q) echo -e "${BRIGHT_GREEN}退出程序。${NC}"; exit 0 ;;
+            *) echo -e "${RED}无效选项，请重新输入。${NC}" ;;
+        esac
+    done
+}
+
+# OpenWrt 菜单（预留）
+openwrt_menu() {
+    echo -e "${BRIGHT_GREEN}OpenWrt 系统管理菜单${NC}"
+    echo -e "${BLUE}====================${NC}"
+    echo -e "${YELLOW}OpenWrt 功能开发中...${NC}"
+    echo -e "${YELLOW}敬请期待！${NC}"
+    echo -e "${BLUE}====================${NC}"
+    
+    # 这里可以添加OpenWrt特有的功能
+    # 比如：安装OpenWrt软件包、配置网络、设置防火墙等
+    
+    read -p "按回车键返回系统选择..."
+    return
 }
 
 # 更换系统软件源
@@ -119,7 +167,7 @@ docker_project_install() {
     echo -e "2: 安装青龙容器"
     echo -e "3: 安装3-xui"
     echo -e "q: 返回主菜单"
-    read -p "请输入选项 (1-+3, q:返回): " docker_choice
+    read -p "请输入选项 (1-3, q:返回): " docker_choice
 
     case $docker_choice in
         1) install_portainer ;;
@@ -182,22 +230,5 @@ install_pve_source() {
 
 # 主循环
 while true; do
-    show_announcement
-    show_menu
-    read -p "请输入选项 (1-11, q:退出): " choice
-    case $choice in
-        1) change_system_sources ;;
-        2) install_docker ;;
-        3) change_docker_registry ;;
-        4) enable_root_ssh ;;
-        5) set_system_timezone ;;
-        6) install_ftp_root_login ;;
-        7) install_1panel ;;
-        8) install_lucky ;;
-        9) install_3x_ui_cn ;;
-        10) docker_project_install ;;
-        11) install_pve_source ;;
-        q) echo -e "${BRIGHT_GREEN}退出程序。${NC}"; exit 0 ;;
-        *) echo -e "${RED}无效选项，请重新输入。${NC}" ;;
-    esac
+    select_system_type
 done
