@@ -12,7 +12,7 @@ show_announcement() {
     echo -e "${BLUE}====================${NC}"
     echo -e "${BRIGHT_GREEN}公告：${NC}"
     echo -e "${YELLOW}仅支持 Debian/Ubuntu 使用，请切换 root 执行${NC}"
-    echo -e "${YELLOW}Docker 安装容器 OpenWrt 可用。${NC}"
+    echo -e "${YELLOW}部分功能OpenWrt 可用。${NC}"
     echo -e "${BLUE}====================${NC}"
 }
 # 打印菜单
