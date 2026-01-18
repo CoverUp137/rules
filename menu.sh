@@ -11,13 +11,10 @@ NC="\033[0m"
 show_announcement() {
     echo -e "${BLUE}====================${NC}"
     echo -e "${BRIGHT_GREEN}公告：${NC}"
-    cat << EOF
-${YELLOW}仅支持 Debian/Ubuntu 使用，请切换 root 执行
-Docker 安装容器 OpenWrt 可用。${NC}
-EOF
+    echo -e "${YELLOW}仅支持 Debian/Ubuntu 使用，请切换 root 执行${NC}"
+    echo -e "${YELLOW}Docker 安装容器 OpenWrt 可用。${NC}"
     echo -e "${BLUE}====================${NC}"
 }
-
 # 打印菜单
 show_menu() {
     echo -e "${BRIGHT_GREEN}请选择一个选项执行：${NC}"
@@ -90,8 +87,8 @@ install_ftp_root_login() {
     sed -i 's/^#*listen.*/listen=YES/' /etc/vsftpd.conf
     sed -i 's/^#*listen_ipv6.*/# listen_ipv6/' /etc/vsftpd.conf
     sed -i 's/^#*anonymous_enable.*/anonymous_enable=YES/' /etc/vsftpd.conf
-    sed -i 's/^#*# write_enable.*/write_enable=YES/' /etc/vsftpd.conf
-    sed -i 's/^#*# anon_mkdir_write_enable.*/anon_mkdir_write_enable=YES/' /etc/vsftpd.conf
+    sed -i 's/^#*write_enable.*=.*/write_enable=YES/' /etc/vsftpd.conf
+    sed -i 's/^#*anon_mkdir_write_enable.*=.*/anon_mkdir_write_enable=YES/' /etc/vsftpd.conf
     sed -i 's/^#*root.*/# root/' /etc/ftpusers
     /etc/init.d/vsftpd restart
     echo -e "${BRIGHT_GREEN}FTP 安装并启用了 root 登录。${NC}"
