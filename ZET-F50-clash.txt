@@ -24,7 +24,7 @@
         const running_mm = document.querySelector('#running_mm')
         const isR = status.content != null && status.content != undefined && status.content != ''
         if (running_mm) {
-            running_mm.innerHTML = isR ? "猫猫 - 🟢运行中" : "猫猫 - 🔴已停止"
+            running_mm.innerHTML = isR ? "Mihomo-Clash - 🟢运行中" : "Mihomo-Clash - 🔴已停止"
         }
         return isR
     }
@@ -336,7 +336,7 @@ awk '{print}' ${PATHS.renderRules}
             }
             if (await checkIsInstalled()) {
                 disabled_btn_enabled = false
-                createToast("已经安装过猫猫了！", 'red')
+                createToast("已经安装过Mihomo-Clash了！", 'red')
                 return
             }
 
@@ -378,33 +378,33 @@ awk '{print}' ${PATHS.renderRules}
 
             await runShellWithRoot("rm -f /data/kano_mihomo_latest.dlog")
 
-            createToast("解压猫猫文件...")
+            createToast("解压Mihomo-Clash文件...")
             const res2 = await runShellWithRoot(`
         cd /data/
         mkdir -p clash
         unzip kano_clash.zip -d /data/clash/
         `)
-            if (!res2.success) return createToast("解压猫猫文件出错!", 'red')
+            if (!res2.success) return createToast("解压Mihomo-Clash文件出错!", 'red')
 
             createToast("检查依赖文件，可能需要一点时间...")
             const res3 = await runShellWithRoot(`
         ls /data/clash/Scripts
         `)
-            if (!res3.success || !res3.content.includes('Clash.Service')) return createToast("检查猫猫依赖文件失败!", 'red')
+            if (!res3.success || !res3.content.includes('Clash.Service')) return createToast("检查Mihomo-Clash依赖文件失败!", 'red')
 
-            createToast("正在安装猫猫，设置Clash自启动...")
+            createToast("正在安装Mihomo-Clash，设置Clash自启动...")
             const res5 = await runShellWithRoot(`
 chmod 777 -Rf /data/clash
 grep -qxF '/data/clash/Scripts/Clash.Service start' /sdcard/ufi_tools_boot.sh || echo '/data/clash/Scripts/Clash.Service start' >> /sdcard/ufi_tools_boot.sh
 grep -qxF 'inotifyd /data/clash/Scripts/Clash.Inotify "/data/clash/Clash" >> /dev/null &' /sdcard/ufi_tools_boot.sh || echo 'inotifyd /data/clash/Scripts/Clash.Inotify "/data/clash/Clash" >> /dev/null &' >> /sdcard/ufi_tools_boot.sh
         `)
-            if (!res5.success) return createToast("设置猫猫自启动失败!", 'red')
+            if (!res5.success) return createToast("设置Mihomo-Clash自启动失败!", 'red')
 
             createToast("启动Clash...")
             const res6 = await runShellWithRoot(`
         /data/clash/Scripts/Clash.Service start
         `)
-            if (!res6.success) return createToast("启动猫猫失败!", 'red')
+            if (!res6.success) return createToast("启动Mihomo-Clash失败!", 'red')
 
             await injectOnly();
 
@@ -452,7 +452,7 @@ grep -qxF 'inotifyd /data/clash/Scripts/Clash.Inotify "/data/clash/Clash" >> /de
         ct++
         tmer && clearTimeout(tmer)
         tmer = setTimeout(() => { ct = 0 }, 3000);
-        if (ct < 3) { return createToast("再点一次卸载猫猫") }
+        if (ct < 3) { return createToast("再点一次卸载Mihomo-Clash") }
         createToast("卸载中...", 'red')
         const res = await runShellWithRoot(`
         /data/clash/Scripts/Clash.Service stop
@@ -477,11 +477,11 @@ grep -qxF 'inotifyd /data/clash/Scripts/Clash.Inotify "/data/clash/Clash" >> /de
             return
         }
         if (!await checkIsInstalled()) {
-            createToast("没有安装猫猫，请先安装！", 'red')
+            createToast("没有安装Mihomo-Clash，请先安装！", 'red')
             return
         }
 
-        createToast("重启猫猫中...", 'green')
+        createToast("重启Mihomo-Clash中...", 'green')
         const res = await runShellWithRoot(`
         /data/clash/Scripts/Clash.Service stop
         sleep 1
@@ -515,7 +515,7 @@ grep -qxF 'inotifyd /data/clash/Scripts/Clash.Inotify "/data/clash/Clash" >> /de
                 return
             }
             if (!await checkIsInstalled()) {
-                createToast("没有安装猫猫，请先安装！", 'red')
+                createToast("没有安装Mihomo-Clash，请先安装！", 'red')
                 return
             }
             await runShellWithRoot(`
@@ -542,7 +542,7 @@ grep -qxF 'inotifyd /data/clash/Scripts/Clash.Inotify "/data/clash/Clash" >> /de
             return
         }
         if (!await checkIsInstalled()) {
-            createToast("没有安装猫猫，请先安装！", 'red')
+            createToast("没有安装Mihomo-Clash，请先安装！", 'red')
             return
         }
         const res = await runShellWithRoot(`
@@ -594,7 +594,7 @@ grep -qxF 'inotifyd /data/clash/Scripts/Clash.Inotify "/data/clash/Clash" >> /de
     uploadBtn.textContent = "上传配置"
     uploadBtn.onclick = async () => {
         if (!await checkIsInstalled()) {
-            createToast("没有安装猫猫，请先安装！", 'red')
+            createToast("没有安装Mihomo-Clash，请先安装！", 'red')
             return
         }
         uploadEl.click()
@@ -609,7 +609,7 @@ grep -qxF 'inotifyd /data/clash/Scripts/Clash.Inotify "/data/clash/Clash" >> /de
             return
         }
         if (!await checkIsInstalled()) {
-            createToast("没有安装猫猫，请先安装！", 'red')
+            createToast("没有安装Mihomo-Clash，请先安装！", 'red')
             return
         }
 
@@ -774,6 +774,7 @@ grep -qxF 'inotifyd /data/clash/Scripts/Clash.Inotify "/data/clash/Clash" >> /de
 
         el.querySelector('#close_rules_btn').onclick = () => close()
 
+        // ========== 修复：查看规则使用独立对话框，不再复用日志模板 ==========
         el.querySelector('#view_rules_btn').onclick = async () => {
             await ensureBaseFiles()
             await renderRulesFile()
@@ -781,7 +782,22 @@ grep -qxF 'inotifyd /data/clash/Scripts/Clash.Inotify "/data/clash/Clash" >> /de
             if (!res.success || !res.content.trim()) {
                 return createToast("暂无规则", 'red')
             }
-            showDialog(res.content, '当前自定义规则（已注入配置）')
+
+            const viewId = 'view_rules_modal_' + createRandomString(4)
+            const { el: viewEl, close: viewClose } = createFixedToast(viewId, `
+            <div style="pointer-events:all;width:85vw;max-width:700px">
+                <div class="title" style="margin:0">当前自定义规则（已注入配置）</div>
+                <pre style="margin:10px 0;max-height:50vh;overflow:auto;background:#1a1a1a;padding:10px;border-radius:6px;font-size:.55rem;color:#ddd;text-align:left;white-space:pre-wrap">${res.content.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
+                <div style="text-align:right">
+                    <button id="close_view_rules_${viewId}" style="font-size:.6rem">${t('close_btn')}</button>
+                </div>
+            </div>
+            `)
+            
+            const closeBtn = viewEl.querySelector(`#close_view_rules_${viewId}`)
+            if (closeBtn) {
+                closeBtn.onclick = () => viewClose()
+            }
         }
 
         el.querySelector('#clear_rules_btn').onclick = async () => {
@@ -840,7 +856,7 @@ grep -qxF 'inotifyd /data/clash/Scripts/Clash.Inotify "/data/clash/Clash" >> /de
             createToast("没有开启高级功能，无法使用！", 'red')
             return
         }
-        createToast("干掉猫猫中...", 'green')
+        createToast("干掉Mihomo-Clash中...", 'green')
         const res = await runShellWithRoot(`
         /data/clash/Scripts/Clash.Service stop
         sleep 1
@@ -861,10 +877,10 @@ grep -qxF 'inotifyd /data/clash/Scripts/Clash.Inotify "/data/clash/Clash" >> /de
             return
         }
         if (!await checkIsInstalled()) {
-            createToast("没有安装猫猫，请先安装！", 'red')
+            createToast("没有安装Mihomo-Clash，请先安装！", 'red')
             return
         }
-        createToast("备份猫猫中...", 'green')
+        createToast("备份Mihomo-Clash中...", 'green')
         const t = Math.floor(Date.now() + Math.random())
         const res = await runShellWithRoot(`
         rm -f /data/data/com.minikano.f50_sms/files/uploads/mm_config_backup*
@@ -874,7 +890,7 @@ grep -qxF 'inotifyd /data/clash/Scripts/Clash.Inotify "/data/clash/Clash" >> /de
         `)
         if (!res.success) return createToast("备份失败！", 'red')
         const a = document.createElement('a')
-        a.download = `猫猫配置备份_config_${t}.yaml`
+        a.download = `Mihomo-Clash配置备份_config_${t}.yaml`
         a.href = `/api/uploads/mm_config_backup_${t}.yaml`
         a.target = "_blank"
         a.style.display = "none"
@@ -897,7 +913,7 @@ grep -qxF 'inotifyd /data/clash/Scripts/Clash.Inotify "/data/clash/Clash" >> /de
         mmContainer.insertAdjacentHTML("afterend", `
 <div id="IFRAME_KANO" style="width: 100%; margin-top: 10px;">
     <div class="title" style="margin: 6px 0 ;">
-        <strong id="running_mm">猫猫</strong>
+        <strong id="running_mm">Mihomo-Clash</strong>
         <div style="display: inline-block;" id="collapse_mm_btn"></div>
     </div>
     <div class="collapse" id="collapse_mm" data-name="close" style="height: 0px; overflow: hidden;">
@@ -955,7 +971,7 @@ grep -qxF 'inotifyd /data/clash/Scripts/Clash.Inotify "/data/clash/Clash" >> /de
                 return
             }
             if (!await checkIsInstalled()) {
-                createToast("没有安装猫猫，请先安装！", 'red')
+                createToast("没有安装Mihomo-Clash，请先安装！", 'red')
                 return
             }
             const isBootUp = await checkIsBootUp();
@@ -1064,7 +1080,7 @@ grep -qxF 'inotifyd /data/clash/Scripts/Clash.Inotify "/data/clash/Clash" >> /de
 
         uploadCore.onclick = async () => {
             if (!await checkIsInstalled()) {
-                createToast("没有安装猫猫，请先安装！", 'red')
+                createToast("没有安装Mihomo-Clash，请先安装！", 'red')
                 return
             }
             uploadCoreInput.click()
@@ -1082,7 +1098,7 @@ grep -qxF 'inotifyd /data/clash/Scripts/Clash.Inotify "/data/clash/Clash" >> /de
         `)
             if (!res.success) return createToast("获取日志失败！", 'red')
             if (!res.content) return createToast("日志内容为空！", 'red')
-            showDialog(res.content, "猫猫日志")
+            showDialog(res.content, "Mihomo-Clash日志")
         }
 
         const mmBox = document.querySelector('#mm_action_box')
