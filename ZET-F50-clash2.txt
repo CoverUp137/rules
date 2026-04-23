@@ -204,10 +204,10 @@
                 fi
             }
 
-            download_file "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geoip.dat" "GeoIP.dat"
+            download_file "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat" "GeoIP.dat"
             r1=$?
             
-            download_file "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geosite.dat" "GeoSite.dat"
+            download_file "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.dat" "GeoSite.dat"
             r2=$?
 
             if [ $r1 -eq 0 ] || [ $r2 -eq 0 ]; then
