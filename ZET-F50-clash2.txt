@@ -184,88 +184,96 @@
         core: '/data/clash/Proxy/Clash.Core',
         geoDir: '/data/clash/Proxy/'
     };
-
-    // ========== 修改：支持选择 Loyalsoldier 或 MetaCubeX GEO 数据库 ==========
-    const updateGeo = async () => {
-        // 弹出选择对话框
-        const source = await new Promise((resolve) => {
-            const containerId = "geo_select_" + createRandomString(4)
-            const { el, close } = createFixedToast(containerId, `
-            <div style="pointer-events:all;width:70vw;max-width:400px;text-align:center">
-                <div class="title" style="margin:0">选择 GEO 数据库源</div>
-                <div style="margin:16px 0;display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
-                    <button id="geo_loyal" style="padding:10px 16px;background:#457b9d;color:#fff;border:none;border-radius:6px;font-size:.65rem;cursor:pointer">
-                        Loyalsoldier<br><span style="font-size:.5rem;opacity:.8">v2ray-rules-dat</span>
-                    </button>
-                    <button id="geo_meta" style="padding:10px 16px;background:#e76f51;color:#fff;border:none;border-radius:6px;font-size:.65rem;cursor:pointer">
-                        MetaCubeX<br><span style="font-size:.5rem;opacity:.8">meta-rules-dat</span>
-                    </button>
-                </div>
-                <button id="geo_cancel" style="font-size:.6rem;padding:4px 12px">${t('close_btn')}</button>
+// ========== 修改：支持选择 Loyalsoldier 或 MetaCubeX GEO 数据库 ==========
+const updateGeo = async () => {
+    // 弹出选择对话框
+    const source = await new Promise((resolve) => {
+        const containerId = "geo_select_" + createRandomString(4)
+        const { el, close } = createFixedToast(containerId, `
+        <div style="pointer-events:all;width:70vw;max-width:400px;text-align:center">
+            <div class="title" style="margin:0">选择 GEO 数据库源</div>
+            <div style="margin:16px 0;display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+                <button id="geo_loyal" style="padding:10px 16px;background:#457b9d;color:#fff;border:none;border-radius:6px;font-size:.65rem;cursor:pointer">
+                    Loyalsoldier<br><span style="font-size:.5rem;opacity:.8">v2ray-rules-dat</span>
+                </button>
+                <button id="geo_meta" style="padding:10px 16px;background:#e76f51;color:#fff;border:none;border-radius:6px;font-size:.65rem;cursor:pointer">
+                    MetaCubeX<br><span style="font-size:.5rem;opacity:.8">meta-rules-dat</span>
+                </button>
             </div>
-            `)
-            
-            el.querySelector('#geo_loyal').onclick = () => { close(); resolve('loyalsoldier') }
-            el.querySelector('#geo_meta').onclick = () => { close(); resolve('metacubex') }
-            el.querySelector('#geo_cancel').onclick = () => { close(); resolve(null) }
-        })
+            <button id="geo_cancel" style="font-size:.6rem;padding:4px 12px">${t('close_btn')}</button>
+        </div>
+        `)
+        
+        el.querySelector('#geo_loyal').onclick = () => { close(); resolve('loyalsoldier') }
+        el.querySelector('#geo_meta').onclick = () => { close(); resolve('metacubex') }
+        el.querySelector('#geo_cancel').onclick = () => { close(); resolve(null) }
+    })
 
-        if (!source) return false
+    if (!source) return false
 
-        const urls = source === 'loyalsoldier' ? {
-            geoip: "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geoip.dat",
-            geosite: "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geosite.dat",
-            name: "Loyalsoldier"
-        } : {
-            geoip: "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat",
-            geosite: "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.dat",
-            name: "MetaCubeX"
+    const urls = source === 'loyalsoldier' ? {
+        geoip: "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geoip.dat",
+        geosite: "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geosite.dat",
+        name: "Loyalsoldier"
+    } : {
+        geoip: "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat",
+        geosite: "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.dat",
+        name: "MetaCubeX"
+    }
+
+    createToast(`正在下载 ${urls.name} 的 GEO 数据库...耐心等待`, "green")
+    const res = await runShellWithRoot(`
+        mkdir -p ${PATHS.geoDir}
+        cd ${PATHS.geoDir}
+        
+        download_file() {
+            local url=$1
+            local file=$2
+            curl -L -f -s -o "$file.tmp" "$url"
+            if [ $? -eq 0 ] && [ -s "$file.tmp" ]; then
+                mv "$file.tmp" "$file"
+                return 0
+            else
+                rm -f "$file.tmp"
+                return 1
+            fi
         }
 
-        createToast(`正在下载 ${urls.name} 的 GEO 数据库...`, "green")
-        const res = await runShellWithRoot(`
-            mkdir -p ${PATHS.geoDir}
-            cd ${PATHS.geoDir}
-            
-            download_file() {
-                local url=$1
-                local file=$2
-                curl -L -f -s -o "$file.tmp" "$url"
-                if [ $? -eq 0 ] && [ -s "$file.tmp" ]; then
-                    mv "$file.tmp" "$file"
-                    return 0
-                else
-                    rm -f "$file.tmp"
-                    return 1
-                fi
-            }
+        download_file "${urls.geoip}" "GeoIP.dat"
+        r1=$?
+        
+        download_file "${urls.geosite}" "GeoSite.dat"
+        r2=$?
 
-            download_file "${urls.geoip}" "GeoIP.dat"
-            r1=$?
-            
-            download_file "${urls.geosite}" "GeoSite.dat"
-            r2=$?
+        if [ $r1 -eq 0 ] || [ $r2 -eq 0 ]; then
+            chmod 777 GeoIP.dat GeoSite.dat 2>/dev/null
+            echo "更新成功"
+            exit 0
+        else
+            echo "全部下载失败"
+            exit 1
+        fi
+    `, 300 * 1000)
 
-            if [ $r1 -eq 0 ] || [ $r2 -eq 0 ]; then
-                chmod 777 GeoIP.dat GeoSite.dat 2>/dev/null
-                echo "更新成功"
-                exit 0
-            else
-                echo "全部下载失败"
-                exit 1
-            fi
-        `, 300 * 1000)
-
-        if (res.success && res.content.includes("更新成功")) {
-            createToast(`${urls.name} GEO 数据库已更新 (GeoIP.dat & GeoSite.dat)，正在重启核心...`, "green")
-            await runShellWithRoot(`${PATHS.service} restart`, 60 * 1000)
-            return true
-        } else {
-            createToast("GEO 数据库更新失败，请检查网络！", "red")
+    if (res.success && res.content.includes("更新成功")) {
+        createToast(`${urls.name} GEO 数据库已更新 (GeoIP.dat & GeoSite.dat)，正在重启核心...`, "green")
+        const restartRes = await runShellWithRoot(`
+        ${PATHS.service} stop
+        sleep 1
+        ${PATHS.service} start
+        `, 60 * 1000)
+        if (!restartRes.success) {
+            createToast("核心重启失败！", "red")
             return false
         }
-    };
-    // ========== GEO 修改结束 ==========
+        return true
+    } else {
+        createToast("GEO 数据库更新失败，请检查网络！", "red")
+        return false
+    }
+};
+// ========== GEO 修改结束 ==========
+
 
     const shellQuote = (str) => `'${String(str).replace(/'/g, `'\\''`)}'`;
 
