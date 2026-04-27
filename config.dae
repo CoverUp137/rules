@@ -26,7 +26,7 @@ subscription {
 }
 
 dns { 
-  # 若 ipversion_prefer 设为 4，且域名同时有 A 和 AAAA 记录，dae 只回应 A 类型的请求，并返回空回复给 AAAA 请求，避免IPV6干扰翻墙速度
+  # 若 ipversion_prefer 设为 4，且域名同时有 A 和 AAAA 记录，dae 只回应 A 类型的请求，并返回空回复给 AAAA 请求
   ipversion_prefer: 4
   upstream {
     alidns: 'udp://dns.alidns.com:53'
@@ -35,7 +35,7 @@ dns {
   routing {  
     request {
       qname(geosite:cn) -> alidns
-      #如果IPV6干扰速度慢，启用 qtype(aaaa) -> reject就要把ipversion_prefer: 4用#注释掉
+      # 如果IPV6干扰速度慢，启用 qtype(aaaa) -> reject就要把ipversion_prefer: 4用#注释掉
       # qtype(aaaa) -> reject
       fallback: googledns
     }
