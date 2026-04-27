@@ -30,7 +30,7 @@ dns {
   ipversion_prefer: 4
   upstream {
     alidns: 'udp://dns.alidns.com:53'
-    googledns: 'https://dns.google:443/dns-query'
+    googledns: 'tcp+udp://dns.google:53'
   }
   routing {  
     request {
