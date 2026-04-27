@@ -13,12 +13,12 @@ global {
     tcp_check_http_method: HEAD
     udp_check_dns: 'dns.google:53,8.8.8.8,2001:4860:4860::8888'
     check_interval: 300s
-    check_tolerance: 40ms
+    check_tolerance: 0ms
     dial_mode: domain
     allow_insecure: false
     sniffing_timeout: 100ms
     tls_implementation: utls
-    utls_imitate: chrome_auto
+    utls_imitate: edge_auto
     mptcp: false
 }
 
@@ -35,12 +35,7 @@ dns {
   routing {  
     request {
       qname(geosite:cn) -> alidns
-      fallback: asis
-    }
-    response {
-      upstream(googledns) -> accept
-      ip(geoip:private) && !qname(geosite:cn) -> googledns
-      fallback: accept
+      fallback: googledns
     }
   }
 }
