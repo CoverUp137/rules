@@ -79,10 +79,12 @@ routing {
     domain(googleapis.cn) -> proxy
     domain(xn--ngstr-lra8j.com) -> proxy
 
-    # 自定义直连域名
- 
+    # 自定义规则区域
 
-    # Bing 相关
+
+
+
+    # Bing 相关，走直连
     domain(www.bing.com) -> direct
     domain(cn.bing.com) -> direct
     domain(rewards.bing.com) -> direct
@@ -94,7 +96,7 @@ routing {
     domain(suffix: bingapistatistics.com) -> direct
     domain(suffix: msxiaobing.com) -> direct
 
-    # 微软账户/登录/积分商店相关
+    # 微软账户/登录/积分商店相关，走直连
     domain(suffix: microsoft.com) -> direct
     domain(suffix: live.com) -> direct
     domain(suffix: outlook.com) -> direct
