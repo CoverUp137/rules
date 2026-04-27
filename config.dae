@@ -1,0 +1,108 @@
+global {
+    tproxy_port: 12345
+    tproxy_port_protect: true
+    pprof_port: 0
+    so_mark_from_dae: 0
+    log_level: info
+    disable_waiting_network: false
+    enable_local_tcp_fast_redirect: true
+    lan_interface: 你的lan名称 一般都是br-lan
+    auto_config_kernel_parameter: true
+    tcp_check_url: 'http://cp.cloudflare.com,1.1.1.1,2606:4700:4700::1111'
+    tcp_check_http_method: HEAD
+    udp_check_dns: 'dns.google:53,8.8.8.8,2001:4860:4860::8888'
+    check_interval: 300s
+    check_tolerance: 40ms
+    dial_mode: domain
+    allow_insecure: false
+    sniffing_timeout: 100ms
+    tls_implementation: utls
+    utls_imitate: chrome_auto
+    mptcp: false
+}
+
+subscription {
+    my_sub: '你的节点订阅'
+}
+
+dns { 
+  # 若 ipversion_prefer 设为 4，且域名同时有 A 和 AAAA 记录，dae 只回应 A 类型的请求，并返回空回复给 AAAA 请求，避免IPV6干扰翻墙速度
+  ipversion_prefer: 4
+  upstream {
+    alidns: 'udp://dns.alidns.com:53'
+    googledns: 'https://dns.google:443/dns-query'
+  }
+  routing {  
+    request {
+      qname(geosite:cn) -> alidns
+      fallback: googledns
+    }
+  }
+}
+
+# 为每个连接从组中随机选择一个节点。
+#policy: random
+
+# 为每个连接从组中选择第一个节点。
+#policy: fixed(0)
+
+# 为每个连接从组中选择最后延迟最小的节点。
+#policy: min
+
+# 为每个连接从组中选择延迟移动平均值最小的节点。
+#policy: min_moving_avg
+
+# 从订阅中筛选香港节点使用  filter: subtag(my_sub) && name(keyword: '香港') 
+ 
+group {
+    proxy {
+        policy: min_moving_avg
+        filter: subtag(my_sub) && name(keyword: '香港') 
+        filter: subtag(my_sub) && name(keyword: '台湾')
+        filter: subtag(my_sub) && name(keyword: '新加坡')
+        filter: subtag(my_sub) && name(keyword: '日本')
+    }
+}
+
+routing {
+    pname(NetworkManager, systemd-resolved, dnsmasq) -> must_direct
+    dip(224.0.0.0/3, 'ff00::/8') -> direct
+    dip(geoip:private) -> direct
+
+    # 强制谷歌CDN走代理的解决谷歌商店下载问题
+    domain(services.googleapis.cn) -> proxy
+    domain(googleapis.cn) -> proxy
+    domain(xn--ngstr-lra8j.com) -> proxy
+
+    # 自定义直连域名
+ 
+
+    # Bing 相关
+    domain(www.bing.com) -> direct
+    domain(cn.bing.com) -> direct
+    domain(rewards.bing.com) -> direct
+    domain(msrewardspme.azureedge.net) -> direct
+    domain(suffix: bing.com) -> direct
+    domain(suffix: bing.net) -> direct
+    domain(suffix: bing.com.cn) -> direct
+    domain(suffix: bing.cn) -> direct
+    domain(suffix: bingapistatistics.com) -> direct
+    domain(suffix: msxiaobing.com) -> direct
+
+    # 微软账户/登录/积分商店相关
+    domain(suffix: microsoft.com) -> direct
+    domain(suffix: live.com) -> direct
+    domain(suffix: outlook.com) -> direct
+    domain(suffix: passport.net) -> direct
+    domain(suffix: msn.cn) -> direct
+    domain(suffix: msn.com) -> direct
+    domain(suffix: windows.net) -> direct
+    domain(suffix: office.net) -> direct
+
+    # 大类分流
+    domain(geosite:geolocation-!cn) -> proxy   
+    l4proto(udp) && dport(443) -> block         
+    domain(geosite:cn) -> direct
+    dip(geoip:cn) -> direct
+  	fallback: proxy
+}
