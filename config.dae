@@ -35,6 +35,8 @@ dns {
   routing {  
     request {
       qname(geosite:cn) -> alidns
+      #如果IPV6干扰速度慢，启用 qtype(aaaa) -> reject就要把ipversion_prefer: 4用#注释掉
+      # qtype(aaaa) -> reject
       fallback: googledns
     }
   }
