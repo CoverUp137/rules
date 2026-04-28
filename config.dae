@@ -6,21 +6,21 @@ global {
     log_level: info
     disable_waiting_network: false
     enable_local_tcp_fast_redirect: true
-    #绑定lan口，填lan名字，一般br-lan
-    lan_interface: br-lan
+    lan_interface: br-lan 
     wan_interface: auto
     auto_config_kernel_parameter: true
     tcp_check_url: 'http://cp.cloudflare.com,1.1.1.1,2606:4700:4700::1111'
     tcp_check_http_method: HEAD
     udp_check_dns: 'dns.google:53,8.8.8.8,2001:4860:4860::8888'
     check_interval: 60s
-    check_tolerance: 0ms
+    check_tolerance: 50ms
     dial_mode: domain
     allow_insecure: false
     sniffing_timeout: 100ms
     tls_implementation: utls
-    utls_imitate: edge_auto
+    utls_imitate: chrome_auto
     mptcp: false
+    fallback_resolver: '8.8.8.8:53'
 }
 
 subscription {
@@ -30,7 +30,7 @@ subscription {
 dns { 
   ipversion_prefer: 4
   upstream {
-    alidns: 'udp://dns.alidns.com:53'
+    alidns: 'udp://223.5.5.5:53'
     googledns: 'https://8.8.8.8:443/dns-query'
   }
   routing {  
