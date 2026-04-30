@@ -91,11 +91,7 @@ routing {
 
 
 
-    # Bing 相关，走直连
-    domain(www.bing.com) -> direct
-    domain(cn.bing.com) -> direct
-    domain(rewards.bing.com) -> direct
-    domain(msrewardspme.azureedge.net) -> direct
+   # Bing 相关（
     domain(suffix:bing.com) -> direct
     domain(suffix:bing.net) -> direct
     domain(suffix:bing.com.cn) -> direct
@@ -103,7 +99,7 @@ routing {
     domain(suffix:bingapistatistics.com) -> direct
     domain(suffix:msxiaobing.com) -> direct
 
-    # 微软账户/登录/积分商店相关，走直连
+    # 微软相关
     domain(suffix:microsoft.com) -> direct
     domain(suffix:live.com) -> direct
     domain(suffix:outlook.com) -> direct
@@ -113,8 +109,10 @@ routing {
     domain(suffix:windows.net) -> direct
     domain(suffix:office.net) -> direct
 
+   # 阻断 QUIC
+    l4proto(udp) && dport(443) -> block   
+
     # 大类分流
-    l4proto(udp) && dport(443) -> block         
     domain(geosite:cn) -> direct
     dip(geoip:cn) -> direct
   	fallback: proxy
