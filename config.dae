@@ -20,7 +20,7 @@ global {
     tls_implementation: utls
     utls_imitate: chrome_auto
     mptcp: false
-    fallback_resolver: '8.8.8.8:53'
+    fallback_resolver: '223.5.5.5:53'
 }
 
 subscription {
