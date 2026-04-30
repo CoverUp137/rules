@@ -33,11 +33,22 @@ dns {
     googledns: 'https://dns.google/dns-query'
   }
   routing {  
-    request {
-      qname(geosite:cn) -> alidns
-      qtype(aaaa) -> alidns
-      fallback: googledns
-    }
+     request {
+    #有需要放行的IPV6域名放这里
+    # qname(suffix:xxx.com) -> alidns
+
+    # 国内域名 AAAA -> 阿里 DNS
+    qname(geosite:cn) && qtype(aaaa) -> alidns
+    
+    # 国内域名 -> 阿里 DNS
+    qname(geosite:cn) -> alidns
+    
+    # 其他 AAAA -> 拒绝
+    qtype(aaaa) -> reject
+    
+    # 其他所有 -> Google DNS
+    fallback: googledns
+  }
   }
 }
 
