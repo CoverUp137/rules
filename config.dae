@@ -34,7 +34,7 @@ dns {
   }
   routing {  
      request {
-    #有需要放行的IPV6域名放这里
+    #有需要优先解析的域名放这里
     # qname(suffix:xxx.com) -> alidns
 
     # 国内域名 AAAA -> 阿里 DNS
