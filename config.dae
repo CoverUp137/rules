@@ -85,22 +85,22 @@ routing {
     domain(cn.bing.com) -> direct
     domain(rewards.bing.com) -> direct
     domain(msrewardspme.azureedge.net) -> direct
-    domain(suffix: bing.com) -> direct
-    domain(suffix: bing.net) -> direct
-    domain(suffix: bing.com.cn) -> direct
-    domain(suffix: bing.cn) -> direct
-    domain(suffix: bingapistatistics.com) -> direct
-    domain(suffix: msxiaobing.com) -> direct
+    domain(suffix:bing.com) -> direct
+    domain(suffix:bing.net) -> direct
+    domain(suffix:bing.com.cn) -> direct
+    domain(suffix:bing.cn) -> direct
+    domain(suffix:bingapistatistics.com) -> direct
+    domain(suffix:msxiaobing.com) -> direct
 
     # 微软账户/登录/积分商店相关，走直连
-    domain(suffix: microsoft.com) -> direct
-    domain(suffix: live.com) -> direct
-    domain(suffix: outlook.com) -> direct
-    domain(suffix: passport.net) -> direct
-    domain(suffix: msn.cn) -> direct
-    domain(suffix: msn.com) -> direct
-    domain(suffix: windows.net) -> direct
-    domain(suffix: office.net) -> direct
+    domain(suffix:microsoft.com) -> direct
+    domain(suffix:live.com) -> direct
+    domain(suffix:outlook.com) -> direct
+    domain(suffix:passport.net) -> direct
+    domain(suffix:msn.cn) -> direct
+    domain(suffix:msn.com) -> direct
+    domain(suffix:windows.net) -> direct
+    domain(suffix:office.net) -> direct
 
     # 大类分流
     l4proto(udp) && dport(443) -> block         
