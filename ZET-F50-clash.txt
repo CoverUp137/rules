@@ -86,6 +86,7 @@
         }
     }
 
+    // ========== 修复：日志查看性能优化（增量读取 + 防抖 + 限制行数 + 文件大小检测） ==========
     const showDialog = (message, title = "提示", isLog = false) => {
         let timer = null
         const containerId = "toast_" + createRandomString(4)
@@ -135,16 +136,65 @@
         if (isLog) {
             const clearBtn = el.querySelector(`#${id_clear}`)
             const rBtn = el.querySelector(`#${id_refresh}`)
+            const msg_el = el.querySelector(`.content_message`)
+            
+            // 状态追踪
+            let lastLineCount = 0
+            let lastFileSize = 0
+            let isFetching = false
+            const MAX_DISPLAY_LINES = 500  // 最大显示行数，防止 DOM 过大
             
             const refresh = async (flag = false) => {
-                const msg_el = el.querySelector(`.content_message`)
-                if (!msg_el) return
-                const res = await runShellWithRoot(`timeout 2s awk '{print}' /sdcard/Clash内核日志.txt`)
-                if (res.success) {
-                    msg_el.innerHTML = res.content.replaceAll('\n', "<br>")
-                    flag && createToast("日志已刷新")
-                } else {
+                if (!msg_el || isFetching) return
+                isFetching = true
+                
+                try {
+                    // 优化1：先获取文件大小，无变化则跳过
+                    const sizeRes = await runShellWithRoot(`stat -c%s /sdcard/Clash内核日志.txt 2>/dev/null || echo 0`)
+                    const currentSize = parseInt(sizeRes.content?.trim() || 0)
+                    
+                    if (!flag && currentSize === lastFileSize) {
+                        isFetching = false
+                        return  // 文件未变化，跳过
+                    }
+                    lastFileSize = currentSize
+                    
+                    // 优化2：使用 tail -n 只读取最后 N 行，避免读取整个大文件
+                    // 如果文件小于1000行则全量读取，否则只读尾部
+                    const cmd = currentSize > 50000 
+                        ? `tail -n ${MAX_DISPLAY_LINES} /sdcard/Clash内核日志.txt 2>/dev/null || echo ''`
+                        : `cat /sdcard/Clash内核日志.txt 2>/dev/null || echo ''`
+                    
+                    const res = await runShellWithRoot(`timeout 3s ${cmd}`)
+                    
+                    if (res.success && res.content !== undefined) {
+                        const lines = res.content.split('\n')
+                        const displayLines = lines.length > MAX_DISPLAY_LINES 
+                            ? lines.slice(-MAX_DISPLAY_LINES) 
+                            : lines
+                        
+                        // 优化3：只有行数变化或强制刷新时才更新 DOM
+                        if (flag || displayLines.length !== lastLineCount) {
+                            lastLineCount = displayLines.length
+                            // 使用 DocumentFragment 或 textContent 减少重排
+                            const html = displayLines.join('<br>')
+                            msg_el.innerHTML = html
+                            
+                            // 自动滚动到底部（仅在新增内容时）
+                            if (flag) {
+                                msg_el.scrollTop = msg_el.scrollHeight
+                            }
+                        }
+                        
+                        flag && createToast("日志已刷新")
+                    } else {
+                        flag && createToast("获取日志失败", 'red')
+                    }
+                } catch (e) {
+                    console.error('日志刷新错误:', e)
                     flag && createToast("获取日志失败", 'red')
+                } finally {
+                    isFetching = false
                 }
             }
 
@@ -152,8 +202,10 @@
                 clearBtn.onclick = async () => {
                     const res = await runShellWithRoot(`echo "" > /sdcard/Clash内核日志.txt`)
                     if (res.success) {
+                        lastLineCount = 0
+                        lastFileSize = 0
+                        msg_el.innerHTML = ''
                         createToast("日志已清空", 'green')
-                        close()
                     } else {
                         createToast(`清空日志失败`, 'red')
                     }
@@ -166,7 +218,11 @@
                 }
             }
 
-            timer = setInterval(async () => { await refresh() }, 1000)
+            // 优化4：降低轮询频率到 3 秒，减少系统负担
+            timer = setInterval(async () => { await refresh() }, 3000)
+            
+            // 初始加载
+            refresh(true)
         }
 
         btn.onclick = async () => {
@@ -174,6 +230,7 @@
             close()
         }
     }
+    // ========== 修复结束 ==========
 
     // ========== 自定义规则核心（独立文件 + 标记块注入，解决订阅覆盖） ==========
     const PATHS = {
@@ -181,8 +238,101 @@
         renderRules: '/data/clash/custom/rules.yaml',
         config: '/data/clash/Proxy/config.yaml',
         service: '/data/clash/Scripts/Clash.Service',
-        core: '/data/clash/Proxy/Clash.Core'
+        core: '/data/clash/Proxy/Clash.Core',
+        geoDir: '/data/clash/Proxy/'
     };
+
+    // ========== 修改：支持选择 Loyalsoldier 或 MetaCubeX GEO 数据库 ==========
+    const updateGeo = async () => {
+        // 弹出选择对话框
+        const source = await new Promise((resolve) => {
+            const containerId = "geo_select_" + createRandomString(4)
+            const { el, close } = createFixedToast(containerId, `
+            <div style="pointer-events:all;width:70vw;max-width:400px;text-align:center">
+                <div class="title" style="margin:0">选择 GEO 数据库源</div>
+                <div style="margin:16px 0;display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+                    <button id="geo_loyal" style="padding:10px 16px;background:#457b9d;color:#fff;border:none;border-radius:6px;font-size:.65rem;cursor:pointer">
+                        Loyalsoldier<br><span style="font-size:.5rem;opacity:.8">v2ray-rules-dat</span>
+                    </button>
+                    <button id="geo_meta" style="padding:10px 16px;background:#e76f51;color:#fff;border:none;border-radius:6px;font-size:.65rem;cursor:pointer">
+                        MetaCubeX<br><span style="font-size:.5rem;opacity:.8">meta-rules-dat</span>
+                    </button>
+                </div>
+                <button id="geo_cancel" style="font-size:.6rem;padding:4px 12px">${t('close_btn')}</button>
+            </div>
+            `)
+            
+            el.querySelector('#geo_loyal').onclick = () => { close(); resolve('loyalsoldier') }
+            el.querySelector('#geo_meta').onclick = () => { close(); resolve('metacubex') }
+            el.querySelector('#geo_cancel').onclick = () => { close(); resolve(null) }
+        })
+
+        if (!source) return false
+
+        const urls = source === 'loyalsoldier' ? {
+        geoip: "https://gh.0507.dpdns.org/https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat",
+        geosite: "https://gh.0507.dpdns.org/https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat",
+        name: "Loyalsoldier"
+    } : {
+        geoip: "https://gh.0507.dpdns.org/https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat",
+        geosite: "https://gh.0507.dpdns.org/https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat",
+        name: "MetaCubeX"
+    }
+
+        createToast(`正在下载 ${urls.name} 的 GEO 数据库...`, "green")
+        const res = await runShellWithRoot(`
+            mkdir -p ${PATHS.geoDir}
+            cd ${PATHS.geoDir}
+            
+            download_file() {
+                local url=$1
+                local file=$2
+                curl -L -f -s -o "$file.tmp" "$url"
+                if [ $? -eq 0 ] && [ -s "$file.tmp" ]; then
+                    mv "$file.tmp" "$file"
+                    return 0
+                else
+                    rm -f "$file.tmp"
+                    return 1
+                fi
+            }
+
+            download_file "${urls.geoip}" "GeoIP.dat"
+            r1=$?
+            
+            download_file "${urls.geosite}" "GeoSite.dat"
+            r2=$?
+
+            if [ $r1 -eq 0 ] || [ $r2 -eq 0 ]; then
+                sleep 2
+                chmod 777 GeoIP.dat GeoSite.dat 2>/dev/null
+                sleep 3
+                echo "更新成功"
+                exit 0
+            else
+                echo "全部下载失败"
+                exit 1
+            fi
+        `, 300 * 1000)
+
+        if (res.success && res.content.includes("更新成功")) {
+            createToast(`${urls.name} GEO 数据库已更新 (GeoIP.dat & GeoSite.dat)，正在重启核心...`, "green")
+            const restartRes = await runShellWithRoot(`
+            ${PATHS.service} stop
+            sleep 1
+            ${PATHS.service} start
+            `, 60 * 1000)
+            if (!restartRes.success) {
+                createToast("核心重启失败！", "red")
+                return false
+            }
+            return true
+        } else {
+            createToast("GEO 数据库更新失败，请检查网络！", "red")
+            return false
+        }
+    };
+    // ========== GEO 修改结束 ==========
 
     const shellQuote = (str) => `'${String(str).replace(/'/g, `'\\''`)}'`;
 
@@ -959,6 +1109,15 @@ DOMAIN-KEYWORD,youtube" style="width:100%;height:110px;padding:6px;border-radius
             a.remove()
         }
 
+        const updateGeoBtn = document.createElement('button')
+        updateGeoBtn.classList.add('btn')
+        updateGeoBtn.textContent = "更新GEO"
+        updateGeoBtn.onclick = async () => {
+            if (!(await checkAdvanceFunc())) return createToast("没有开启高级功能，无法使用！", 'red')
+            if (!await checkIsInstalled()) return createToast("没有安装Mihomo-Clash，请先安装！", 'red')
+            await updateGeo()
+        }
+
         const wiki = document.createElement('button')
         wiki.classList.add('btn')
         wiki.textContent = "文档教程"
@@ -1018,7 +1177,7 @@ DOMAIN-KEYWORD,youtube" style="width:100%;height:110px;padding:6px;border-radius
         }
 
         const uploadCore = document.createElement('button')
-        uploadCore.textContent = "更新内核"
+        uploadCore.textContent = "上传内核"
         const uploadCoreInput = document.createElement('input')
         uploadCoreInput.type = 'file'
         uploadCoreInput.accept = '*/*'
@@ -1126,6 +1285,7 @@ DOMAIN-KEYWORD,youtube" style="width:100%;height:110px;padding:6px;border-radius
         mmBox.appendChild(boot_on)
         mmBox.appendChild(open)
         mmBox.appendChild(uploadCore)
+        mmBox.appendChild(updateGeoBtn)
         mmBox.appendChild(wiki)
         mmBox.appendChild(showLogBtn)
         mmBox.appendChild(refresh)
