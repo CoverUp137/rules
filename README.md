@@ -8,9 +8,9 @@
 
 | 项目 | 存放路径 | 说明 |
 |:---|:---|:---|
-| **OpenWrt** | `/etc/config` | UCI 系统配置文件 |
-| **dae** | `/etc/dae/config.dae` | dae 代理核心配置 |
-| **nikki** | `/etc/config/nikki` | Nikki 插件 UCI 配置 |
+| **Openclash** | `/etc/config` | openclash-UCI 系统配置文件 |
+| **dae** | `/etc/dae/config.dae` | openwrt-dae 代理核心配置 |
+| **nikki** | `/etc/config/nikki` | openwrt-Nikki 插件 UCI 配置 |
 | **ZET-F50-clash.txt** | `UFI-TOOL/插件商店/上传` | 中兴F50/飞猫U20 clash插件 |
 ---
 
