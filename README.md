@@ -17,7 +17,7 @@
 ## 🚀 一键脚本
 
 ```
-# 1. 更新系统管理菜单
+# 1. linux简易管理菜单
 bash <(curl -sSL https://gh.0507.dpdns.org/https://raw.githubusercontent.com/CoverUp137/rules/refs/heads/main/menu.sh)
 
 # 2. 更新 Nikki GeoData 数据库
