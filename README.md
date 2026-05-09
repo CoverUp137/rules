@@ -1,11 +1,25 @@
- openwrt 存放至/etc/config
- config.dae 存放至/etc/dae
- nikki 存放至/etc/config
- ## 系统管理简易工具
- ```
- bash <(curl -sSL https://gh.0507.dpdns.org/https://raw.githubusercontent.com/CoverUp137/rules/refs/heads/main/menu.sh)
- ```
- ## nikki geodata下载脚本
-  ```
+# 📦 路由规则配置指南
+
+&gt; 适用于 **OpenWrt** / **dae** / **nikki** 的一键配置与维护脚本
+
+---
+
+## 📁 配置文件存放路径
+
+| 项目 | 存放路径 | 说明 |
+|:---|:---|:---|
+| **OpenWrt** | `/etc/config` | UCI 系统配置文件 |
+| **dae** | `/etc/dae/config.dae` | dae 代理核心配置 |
+| **nikki** | `/etc/config/nikki` | Nikki 插件 UCI 配置 |
+
+---
+
+## 🚀 一键脚本
+
+```
+# 1. 更新系统管理菜单
+bash <(curl -sSL https://gh.0507.dpdns.org/https://raw.githubusercontent.com/CoverUp137/rules/refs/heads/main/menu.sh)
+
+# 2. 更新 Nikki GeoData 数据库
 bash <(curl -sSL https://gh.0507.dpdns.org/https://raw.githubusercontent.com/CoverUp137/rules/refs/heads/main/nikki-geodata.sh)
- ```
+```
