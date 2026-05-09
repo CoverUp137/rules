@@ -1,6 +1,6 @@
-# 📦 路由规则配置指南
+# 📦 OpenWrt代理配置
 
-&gt; 适用于 **OpenWrt** / **dae** / **nikki** 的一键配置与维护脚本
+&gt; 适用于 **Openclash** / **dae** / **nikki** 的配置文件以及一些杂项
 
 ---
 
