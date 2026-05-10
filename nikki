@@ -13,8 +13,8 @@ config config 'config'
 config procd 'procd'
 	option fast_reload '1'
 	option env_disable_loopback_detector '0'
-	option env_disable_quic_go_gso '0'
-	option env_disable_quic_go_ecn '0'
+	option env_disable_quic_go_gso '1'
+	option env_disable_quic_go_ecn '1'
 	option env_skip_system_ipv6_check '0'
 	option rlimit_nofile_soft '65536'
 	option rlimit_nofile_hard '65536'
@@ -474,17 +474,17 @@ config rule
 	option matcher 'msxiaobing.com'
 	option node 'DIRECT'
 
-config rule
-	option enabled '1'
-	option type 'DOMAIN-SUFFIX'
-	option matcher 'mgsearcher.com'
-	option node '♻️ 自动选择'
+#config rule
+#	option enabled '1'
+#	option type 'DOMAIN-SUFFIX'
+#	option matcher 'mgsearcher.com'
+#	option node '♻️ 自动选择'
 
-config rule
-	option enabled '1'
-	option type 'DOMAIN-SUFFIX'
-	option matcher 'baozimh.com'
-	option node '♻️ 自动选择'
+#config rule
+#	option enabled '1'
+#	option type 'DOMAIN-SUFFIX'
+#	option matcher 'baozimh.com'
+#	option node '♻️ 自动选择'
 
 config rule
 	option enabled '1'
@@ -535,21 +535,21 @@ config rule
 	option node 'DIRECT'
 
 ## 解决谷歌商店下载问题
-config rule
-	option enabled '1'
-	option type 'DOMAIN'
-	option matcher 'services.googleapis.cn'
-	option node '♻️ 自动选择'
+#config rule
+#	option enabled '1'
+#	option type 'DOMAIN'
+#	option matcher 'services.googleapis.cn'
+#	option node '♻️ 自动选择'
 
-config rule
-	option enabled '1'
-	option type 'DOMAIN'
-	option matcher 'googleapis.cn'
-	option node '♻️ 自动选择'
+#config rule
+#	option enabled '1'
+#	option type 'DOMAIN'
+#	option matcher 'googleapis.cn'
+#	option node '♻️ 自动选择'
 
-config rule
-	option enabled '1'
-	option type 'DOMAIN'
-	option matcher 'xn--ngstr-lra8j.com'
-	option node '♻️ 自动选择'
+#config rule
+#	option enabled '1'
+#	option type 'DOMAIN'
+#	option matcher 'xn--ngstr-lra8j.com'
+#	option node '♻️ 自动选择'
 
