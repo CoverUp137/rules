@@ -400,20 +400,13 @@ config log 'log'
 	option scheduled_clear_size_limit_unit 'MB'
 
 ## 放行IP
-config rule
-	option enabled '1'
-	option type 'IP-CIDR'
-	option matcher 'youip/32'
-	option node 'DIRECT'
-	option no_resolve '0'
+#config rule
+#	option enabled '1'
+#	option type 'IP-CIDR'
+#	option matcher 'youip/32'
+#	option node 'DIRECT'
+#	option no_resolve '0'
 
-## 放行IP
-config rule
-	option enabled '1'
-	option type 'IP-CIDR'
-	option matcher 'youIP/32'
-	option node 'DIRECT'
-	option no_resolve '0'
 
 config rule
 	option enabled '1'
