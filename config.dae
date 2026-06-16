@@ -34,17 +34,8 @@ dns {
   }
   routing {  
      request {
-    #有需要优先解析的域名放这里
-    # qname(suffix:xxx.com) -> alidns
-
-    # 国内域名 AAAA -> 阿里 DNS
-    qname(geosite:cn) && qtype(aaaa) -> alidns
-    
     # 国内域名 -> 阿里 DNS
     qname(geosite:cn) -> alidns
-    
-    # 其他 AAAA -> 拒绝
-    qtype(aaaa) -> reject
     
     # 其他所有 -> Google DNS
     fallback: googledns
@@ -80,7 +71,9 @@ routing {
     pname(NetworkManager, systemd-resolved, dnsmasq) -> must_direct
     dip(224.0.0.0/3, 'ff00::/8') -> direct
     dip(geoip:private) -> direct
-
+    l4proto(udp) && dport(443) -> block   
+    domain(geosite:cn) -> direct
+    dip(geoip:cn) -> direct
     # 强制谷歌CDN走代理的解决谷歌商店下载问题
     domain(services.googleapis.cn) -> proxy
     domain(googleapis.cn) -> proxy
@@ -94,7 +87,6 @@ routing {
    # Bing 相关（
     domain(suffix:bing.com) -> direct
     domain(suffix:bing.net) -> direct
-    domain(suffix:bing.com.cn) -> direct
     domain(suffix:bing.cn) -> direct
     domain(suffix:bingapistatistics.com) -> direct
     domain(suffix:msxiaobing.com) -> direct
@@ -109,11 +101,5 @@ routing {
     domain(suffix:windows.net) -> direct
     domain(suffix:office.net) -> direct
 
-   # 阻断 QUIC
-    l4proto(udp) && dport(443) -> block   
-
-    # 大类分流
-    domain(geosite:cn) -> direct
-    dip(geoip:cn) -> direct
   	fallback: proxy
 }
