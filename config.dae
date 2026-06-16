@@ -75,9 +75,9 @@ routing {
     domain(geosite:cn) -> direct
     dip(geoip:cn) -> direct
     # 强制谷歌CDN走代理的解决谷歌商店下载问题
-    domain(services.googleapis.cn) -> proxy
-    domain(googleapis.cn) -> proxy
-    domain(xn--ngstr-lra8j.com) -> proxy
+    domain(suffix: services.googleapis.cn) -> proxy
+    domain(suffix: googleapis.cn) -> proxy
+    domain(suffix: xn--ngstr-lra8j.com) -> proxy
 
     # 自定义规则区域
 
@@ -85,21 +85,21 @@ routing {
 
 
    # Bing 相关（
-    domain(suffix:bing.com) -> direct
-    domain(suffix:bing.net) -> direct
-    domain(suffix:bing.cn) -> direct
-    domain(suffix:bingapistatistics.com) -> direct
-    domain(suffix:msxiaobing.com) -> direct
+    domain(suffix: bing.com) -> direct
+    domain(suffix: bing.net) -> direct
+    domain(suffix: bing.cn) -> direct
+    domain(suffix: bingapistatistics.com) -> direct
+    domain(suffix: msxiaobing.com) -> direct
 
     # 微软相关
-    domain(suffix:microsoft.com) -> direct
-    domain(suffix:live.com) -> direct
-    domain(suffix:outlook.com) -> direct
-    domain(suffix:passport.net) -> direct
-    domain(suffix:msn.cn) -> direct
-    domain(suffix:msn.com) -> direct
-    domain(suffix:windows.net) -> direct
-    domain(suffix:office.net) -> direct
+    domain(suffix: microsoft.com) -> direct
+    domain(suffix: live.com) -> direct
+    domain(suffix: outlook.com) -> direct
+    domain(suffix: passport.net) -> direct
+    domain(suffix: msn.cn) -> direct
+    domain(suffix: msn.com) -> direct
+    domain(suffix: windows.net) -> direct
+    domain(suffix: office.net) -> direct
 
   	fallback: proxy
 }
