@@ -45,22 +45,21 @@ debian_ubuntu_menu() {
         echo -e "${YELLOW}工具安装：${NC}"
         echo -e "7: 安装1panel面板"
         echo -e "8: 安装lucky大吉"
-        echo -e "9: 安装3-xui汉化版"
         echo -e "${YELLOW}====================${NC}"
         
         echo -e "${YELLOW}容器管理：${NC}"
-        echo -e "10: Docker 容器项目安装"
+        echo -e "9: Docker 容器项目安装"
         echo -e "${BLUE}====================${NC}"
         
         echo -e "${YELLOW}PVE虚拟机：${NC}"
-        echo -e "11: 安装pve_source"
+        echo -e "10: 安装VE-Tools-9"
         echo -e "${BLUE}====================${NC}"
         
         echo -e "b: 返回系统选择"
         echo -e "q: 退出程序"
         echo -e "${BLUE}====================${NC}"
         
-        read -p "请输入选项 (1-11, b:返回, q:退出): " choice
+        read -p "请输入选项 (1-10, b:返回, q:退出): " choice
         case $choice in
             1) change_system_sources ;;
             2) install_docker ;;
@@ -70,9 +69,8 @@ debian_ubuntu_menu() {
             6) install_ftp_root_login ;;
             7) install_1panel ;;
             8) install_lucky ;;
-            9) install_3x_ui_cn ;;
-            10) docker_project_install ;;
-            11) install_pve_source ;;
+            9) docker_project_install ;;
+            10) install_pve_tools_9 ;;
             b) return ;;
             q) echo -e "${BRIGHT_GREEN}退出程序。${NC}"; exit 0 ;;
             *) echo -e "${RED}无效选项，请重新输入。${NC}" ;;
@@ -87,9 +85,6 @@ openwrt_menu() {
     echo -e "${YELLOW}OpenWrt 功能开发中...${NC}"
     echo -e "${YELLOW}敬请期待！${NC}"
     echo -e "${BLUE}====================${NC}"
-    
-    # 这里可以添加OpenWrt特有的功能
-    # 比如：安装OpenWrt软件包、配置网络、设置防火墙等
     
     read -p "按回车键返回系统选择..."
     return
@@ -154,25 +149,21 @@ install_lucky() {
     curl -o /tmp/install.sh https://fastly.jsdelivr.net/gh/gdy666/lucky-files@main/golucky.sh && sh /tmp/install.sh https://fastly.jsdelivr.net/gh/gdy666/lucky-files@main 2.15.7
 }
 
-# 安装 3-xui汉化版
-install_3x_ui_cn() {
-    echo -e "${BRIGHT_GREEN}正在安装 3-xui 汉化版...${NC}"
-    bash <(curl -Ls https://raw.githubusercontent.com/xeefei/3x-ui/master/install.sh)
-}
-
 # 容器项目安装
 docker_project_install() {
     echo -e "${BRIGHT_GREEN}请选择一个容器项目安装选项：${NC}"
     echo -e "1: 安装 portainer-ce"
     echo -e "2: 安装青龙容器"
-    echo -e "3: 安装3-xui"
+    echo -e "3: 安装呆呆面板"
+    echo -e "4: 安装 dpanel"
     echo -e "q: 返回主菜单"
-    read -p "请输入选项 (1-3, q:返回): " docker_choice
+    read -p "请输入选项 (1-4, q:返回): " docker_choice
 
     case $docker_choice in
         1) install_portainer ;;
         2) install_qinglong ;;
-        3) install_3x_ui ;;
+        3) install_daidai ;;
+        4) install_dpanel ;;
         q) return ;;
         *) echo -e "${RED}无效选项，请重新输入。${NC}" ;;
     esac
@@ -180,7 +171,7 @@ docker_project_install() {
 
 # 安装 portainer-ce
 install_portainer() {
-    echo -e "${BRIGHT_GREEN}请输入外网访问端口（默认9000）："
+    echo -e "${BRIGHT_GREEN}请输入外网访问端口（默认9000）：${NC}"
     read -p "端口: " port
     port=${port:-9000}
     echo -e "${BRIGHT_GREEN}正在安装 portainer-ce...${NC}"
@@ -195,7 +186,7 @@ install_portainer() {
 
 # 安装青龙容器
 install_qinglong() {
-    echo -e "${BRIGHT_GREEN}请输入外网访问端口（默认1997）："
+    echo -e "${BRIGHT_GREEN}请输入外网访问端口（默认1997）：${NC}"
     read -p "端口: " port
     port=${port:-1997}
     echo -e "${BRIGHT_GREEN}正在安装青龙容器(1997端口)...${NC}"
@@ -208,24 +199,63 @@ install_qinglong() {
        whyour/qinglong:debian
 }
 
-# 安装 3-xui
-install_3x_ui() {
-    echo -e "${BRIGHT_GREEN}正在安装 3-xui 容器...${NC}"
-    docker run -itd \
-       -e XRAY_VMESS_AEAD_FORCED=false \
-       -v $PWD/3-xui/db/:/etc/x-ui/ \
-       -v $PWD/3-xui/cert/:/root/cert/ \
-       --network=host \
-       --restart=unless-stopped \
-       --name 3x-ui \
-       ghcr.io/xeefei/3x-ui:latest
+# 安装呆呆面板
+install_daidai() {
+    echo -e "${BRIGHT_GREEN}请输入外网访问端口（默认5700）：${NC}"
+    read -p "端口: " port
+    port=${port:-5700}
+    echo -e "${BRIGHT_GREEN}正在安装呆呆面板（端口: $port）...${NC}"
+    
+    docker run -d --pull=always \
+      --name daidai-panel \
+      --restart unless-stopped \
+      -p $port:5700 \
+      -v $(pwd)/Dumb-Panel:/app/Dumb-Panel \
+      -e TZ=Asia/Shanghai \
+      -e CONTAINER_NAME=daidai-panel \
+      -e IMAGE_NAME=linzixuanzz/daidai-panel:latest \
+      -e PANEL_UPDATE_MANAGER=watchtower \
+      --label com.centurylinklabs.watchtower.enable=true \
+      linzixuanzz/daidai-panel:latest
+    
+    echo -e "${BRIGHT_GREEN}正在安装 watchtower 用于呆呆面板自动更新...${NC}"
+    docker run -d \
+      --name daidai-watchtower \
+      --restart unless-stopped \
+      -v /var/run/docker.sock:/var/run/docker.sock \
+      --label com.centurylinklabs.watchtower.enable=false \
+      nickfedor/watchtower:latest \
+      --label-enable \
+      --cleanup \
+      --interval 36000
+    
+    echo -e "${BRIGHT_GREEN}呆呆面板安装完成！${NC}"
+    echo -e "${YELLOW}访问地址: http://<服务器IP>:$port${NC}"
 }
 
-# 安装pve_source
-install_pve_source() {
-    echo -e "${BRIGHT_GREEN}正在安装pve_source...${NC}"
-    wget -q -O /root/pve_source.tar.gz 'https://bbs.x86pi.cn/file/topic/2024-01-06/file/24f723efc6ab4913b1f99c97a1d1a472b2.gz' && tar zxvf /root/pve_source.tar.gz && /root/./pve_source
-    echo -e "${BRIGHT_GREEN}pve_source安装完成。${NC}"
+# 安装 dpanel
+install_dpanel() {
+    echo -e "${BRIGHT_GREEN}请输入外网访问端口（默认8080）：${NC}"
+    read -p "端口: " port
+    port=${port:-8080}
+    echo -e "${BRIGHT_GREEN}正在安装 dpanel（端口: $port）...${NC}"
+    
+    docker run -d --name dpanel --restart=always \
+      -p $port:8080 \
+      -e APP_NAME=dpanel \
+      -v /var/run/docker.sock:/var/run/docker.sock \
+      -v /home/dpanel:/dpanel \
+      dpanel/dpanel:lite
+    
+    echo -e "${BRIGHT_GREEN}dpanel 安装完成！${NC}"
+    echo -e "${YELLOW}访问地址: http://<服务器IP>:$port${NC}"
+}
+
+# 安装VE-Tools-9
+install_pve_tools_9() {
+    echo -e "${BRIGHT_GREEN}正在安装VE-Tools-9...${NC}"
+    bash <(curl -sSL https://ghfast.top/raw.githubusercontent.com/PVE-Tools/PVE-Tools-9/main/PVE-Tools.sh)
+    echo -e "${BRIGHT_GREEN}VE-Tools-9安装完成。${NC}"
 }
 
 # 主循环
