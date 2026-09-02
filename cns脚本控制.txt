@@ -884,10 +884,10 @@
                 </div>
                 <div class="cns-subtitle">脚本操作<span id="cns_info" class="cns-ip-info"></span></div>
                 <div class="cns-btn-grid">
-                    <button id="btn_start" class="cns-btn">▶ 启动 (start.sh)</button>
-                    <button id="btn_stop" class="cns-btn">⏹ 停止 (stop.sh)</button>
-                    <button id="btn_status" class="cns-btn">📊 检测状态 (status.sh)</button>
-                    <button id="btn_gen" class="cns-btn">⚙ 生成配置 (生成配置.sh)</button>
+                    <button id="btn_start" class="cns-btn">▶ 启动 </button>
+                    <button id="btn_stop" class="cns-btn">⏹ 停止 </button>
+                    <button id="btn_status" class="cns-btn">📊 检测状态 </button>
+                    <button id="btn_gen" class="cns-btn">⚙ 生成配置 </button>
                     <button id="btn_ip" class="cns-btn">🌐 检测IP</button>
                     <button id="btn_config" class="cns-btn">修改配置</button>
                     <button id="btn_upload" class="cns-btn">上传配置</button>
