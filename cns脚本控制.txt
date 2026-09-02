@@ -1,0 +1,1007 @@
+//<script>
+(async () => {
+    const MODAL_ID = 'cns_control_modal';
+    const STYLE_ID = 'cns_control_style';
+    const CNS_DIR = '/data/cns';
+    const CNS_MODE_DIR = CNS_DIR + '/makeCNSMode';
+    const CNS_MODE_FILE = CNS_MODE_DIR + '/cns配置.ini';
+    const CNS_UP_SCRIPT = CNS_MODE_DIR + '/生成配置.sh';
+    const AUTOSTART_SCRIPT = '/sdcard/ufi_tools_boot.sh';
+        // ⚠️ 如果您的进程名不是 cns，请修改下面这个变量（例如 'clnc' 或 'python' 等）
+    const CNS_PROCESS_NAME = 'clnc';
+
+    // --- 下载相关配置 ---
+    const DL_TMP_DIR = '/data/.cns_dl';
+    const DL_ZIP = DL_TMP_DIR + '/cns.zip';
+    const DL_SCRIPT = DL_TMP_DIR + '/dl.sh';
+    const DL_LOG = DL_TMP_DIR + '/dl.log';
+    const DL_CODE = DL_TMP_DIR + '/dl.code';
+    const DL_EXTRACT = DL_TMP_DIR + '/extract';
+    const DL_URL_KEY = 'cns_download_url';
+    const DL_MAX_WAIT_MS = 300000; // 最长等待 5 分钟
+    const DL_DEFAULT_URL = 'https://gh.0507.dpdns.org/https://github.com/CoverUp137/rules/releases/download/cns/clnc-1.2.zip';
+
+    let configCurrentFile = '';
+    let configSavedContent = '';
+
+    document.getElementById(MODAL_ID)?.remove();
+    document.getElementById(STYLE_ID)?.remove();
+
+    const style = document.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent = `
+        .cns-main-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-left: 8px;
+            background-color: #666;
+            vertical-align: middle;
+            transition: all 0.3s ease;
+        }
+        .cns-main-dot.running {
+            background-color: #00e676 !important;
+            box-shadow: 0 0 5px #00e676;
+        }
+        .cns-main-dot.stopped {
+            background-color: #ff1744 !important;
+            box-shadow: 0 0 5px #ff1744;
+        }
+        .cns-modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.65); z-index: 9999; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(4px); }
+        .cns-card { background: rgba(18, 45, 65, 0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(100, 180, 220, 0.2); border-radius: 14px; width: 90%; max-width: 460px; height: 80vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4); }
+        .cns-header { font-size: 18px; font-weight: 600; color: #fff; padding: 14px 10px 2px 10px; border-left: 3px solid #3498db; letter-spacing: 0.5px; display: flex; justify-content: space-between; align-items: center; }
+        .cns-status-badge { font-size: 12px; padding: 3px 8px; border-radius: 4px; font-weight: bold; }
+        .cns-status-badge.running { background: #28a745; color: #fff; box-shadow: 0 0 8px rgba(40, 167, 69, 0.4); }
+        .cns-status-badge.stopped { background: #dc3545; color: #fff; box-shadow: 0 0 8px rgba(220, 53, 69, 0.4); }
+        .cns-subtitle { font-size: 12.5px; color: #8ab4f8; margin: 12px 0 10px 0; padding-left: 13px; }
+        .cns-ip-info { font-size: 11px; font-weight: normal; color: #9bd0e8; margin-left: 8px; }
+        .cns-btn-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px; padding: 0 12px; }
+        .cns-btn { background: rgba(35, 70, 100, 0.6); border: 1px solid rgba(100, 180, 220, 0.15); border-radius: 8px; color: #e0eef5; font-size: 13.5px; padding: 8px 6px; cursor: pointer; transition: all 0.2s ease; text-align: center; }
+        .cns-btn:active { background: rgba(55, 105, 145, 0.8); transform: scale(0.98); }
+        .cns-btn:disabled { opacity: 0.6; }
+        .cns-log-box { background: rgba(8, 16, 28, 0.9); border: 1px solid rgba(100, 180, 220, 0.1); border-radius: 8px; padding: 10px 12px; margin: 0 12px 12px 12px; flex: 1; overflow-y: auto; font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; font-size: 13px; color: #9bd0e8; min-height: 20px; max-height: 50vh; white-space: pre-wrap; word-break: break-all; line-height: 1.55; box-shadow: inset 0 2px 6px rgba(0,0,0,0.3); scrollbar-width: none; -ms-overflow-style: none; }
+        .cns-log-box::-webkit-scrollbar { display: none; }
+        .cns-bottom-bar { margin-top: auto; padding: 0 12px 16px 12px; display: flex; flex-direction: column; gap: 8px; }
+        .cns-close-btn { box-sizing: border-box; -webkit-appearance: none; appearance: none; width: 100%; height: 40px; line-height: 40px; padding: 0; text-align: center; font-family: inherit; -webkit-tap-highlight-color: transparent; background: rgba(35, 70, 100, 0.6); border: none; border-radius: 8px; color: #fff; font-size: 15px; cursor: pointer; transition: all 0.2s ease; }
+        .cns-close-btn:active { background: rgba(200, 60, 60, 0.9); transform: scale(0.99); }
+        .cns-select-row { display: flex; gap: 8px; margin: 0 12px 10px 12px; }
+        .cns-select-row .cns-select { flex: 1; width: auto; margin: 0; }
+        .cns-select-row .cns-danger-btn { flex: 0 0 auto; padding: 10px 16px; }
+        .cns-select { box-sizing: border-box; width: calc(100% - 24px); margin: 0 12px 10px 12px; padding: 10px 12px; background: rgba(8, 16, 28, 0.9); border: 1px solid rgba(100, 180, 220, 0.2); border-radius: 8px; color: #e0eef5; font-size: 13.5px; outline: none; }
+        .cns-select:focus { border-color: rgba(100, 180, 220, 0.5); }
+        .cns-select:disabled { opacity: 0.6; }
+        .cns-edit-box { box-sizing: border-box; -webkit-appearance: none; appearance: none; scrollbar-width: none; -ms-overflow-style: none; width: calc(100% - 24px); margin: 0 12px 8px 12px; padding: 10px 12px; background: rgba(8, 16, 28, 0.9); border: 1px solid rgba(100, 180, 220, 0.2); border-radius: 8px; color: #e0eef5; font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; font-size: 14px !important; line-height: 1.6; flex: 1; min-height: 300px; max-height: 52vh; resize: none; outline: none; white-space: pre; overflow: auto; }
+        .cns-edit-box::-webkit-scrollbar { display: none; }
+        .cns-edit-box:focus { border-color: rgba(100, 180, 220, 0.5); }
+        .cns-edit-box:disabled { opacity: 0.6; }
+        .cns-config-file { font-size: 12px; font-weight: normal; color: #8ab4f8; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .cns-config-feedback { min-height: 16px; margin: 0 12px 10px 12px; font-size: 12px; color: #8ab4f8; line-height: 1.5; }
+        .cns-btn-row { display: flex; gap: 8px; }
+        .cns-btn-row .cns-btn { flex: 1; }
+        .cns-save-btn { flex: 1; background: rgba(40, 167, 105, 0.7); border: 1px solid rgba(0, 230, 118, 0.25); border-radius: 8px; color: #fff; font-size: 13.5px; padding: 11px 6px; cursor: pointer; transition: all 0.2s ease; text-align: center; }
+        .cns-save-btn:active { background: rgba(0, 200, 90, 0.9); transform: scale(0.98); }
+        .cns-save-btn:disabled { opacity: 0.6; }
+        .cns-danger-btn { flex: 1; background: rgba(160, 50, 50, 0.7); border: 1px solid rgba(255, 82, 82, 0.3); border-radius: 8px; color: #fff; font-size: 13.5px; padding: 11px 6px; cursor: pointer; transition: all 0.2s ease; text-align: center; }
+        .cns-danger-btn:active { background: rgba(200, 60, 60, 0.9); transform: scale(0.98); }
+        .cns-danger-btn:disabled { opacity: 0.6; }
+        .cns-config-toast { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%) scale(0.9); background: rgba(18, 45, 65, 0.95); border: 1px solid rgba(0, 230, 118, 0.4); border-radius: 10px; color: #fff; font-size: 15px; padding: 14px 26px; z-index: 10001; opacity: 0; transition: all 0.25s ease; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4); pointer-events: none; }
+        .cns-config-toast.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+        .cns-confirm-card { width: 86%; max-width: 360px; height: auto; padding: 24px 18px 16px 18px; }
+        .cns-confirm-text { font-size: 14px; color: #e0eef5; line-height: 1.6; text-align: center; word-break: break-all; margin-bottom: 20px; }
+        .cns-download-card { width: 90%; max-width: 420px; height: auto; padding: 4px 0 14px 0; }
+        .cns-input { box-sizing: border-box; -webkit-appearance: none; appearance: none; width: calc(100% - 24px); margin: 0 12px 8px 12px; padding: 10px 12px; background: rgba(8, 16, 28, 0.9); border: 1px solid rgba(100, 180, 220, 0.2); border-radius: 8px; color: #e0eef5; font-size: 13.5px; outline: none; }
+        .cns-input:focus { border-color: rgba(100, 180, 220, 0.5); }
+        .cns-download-row { display: flex; gap: 8px; padding: 0 12px; }
+        .cns-download-row .cns-btn, .cns-download-row .cns-save-btn { flex: 1; }
+        .cns-help-card { width: 90%; max-width: 460px; height: auto; max-height: 80vh; padding: 4px 0 14px 0; }
+        .cns-help-box { background: rgba(8, 16, 28, 0.9); border: 1px solid rgba(100, 180, 220, 0.1); border-radius: 8px; padding: 14px 16px; margin: 0 12px 12px 12px; overflow-y: auto; font-size: 14px; color: #e0eef5; line-height: 1.8; white-space: pre-wrap; word-break: break-all; scrollbar-width: none; -ms-overflow-style: none; }
+        .cns-help-box::-webkit-scrollbar { display: none; }
+        .cns-help-title { font-size: 15px; font-weight: 600; color: #00e676; margin-bottom: 6px; }
+        .cns-help-section { margin-bottom: 14px; }
+    `;
+    document.head.appendChild(style);
+
+    function parseResult(res) {
+        if (res === null || res === undefined) return '(无输出)';
+        if (typeof res === 'object' && res.content !== undefined) return String(res.content).trim();
+        if (typeof res === 'string') return res.trim();
+        try { return JSON.stringify(res); } catch(e) { return String(res); }
+    }
+
+    function nowTimeStr() {
+        const now = new Date();
+        return `${now.getFullYear()}/${String(now.getMonth()+1).padStart(2,'0')}/${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+    }
+
+    function appendLog(text) {
+        const logBox = document.getElementById('cns_log');
+        if (logBox) { logBox.textContent = `[${nowTimeStr()}]\n${text}`; logBox.scrollTop = logBox.scrollHeight; }
+    }
+
+    // --- 通用小工具 ---
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    // shell 单引号安全转义，防止链接中的特殊字符被当成命令
+    function shQuote(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
+
+    function isValidHttpUrl(u) { return /^https?:\/\/[^\s'"\\<>]+$/i.test(u); }
+
+    function fmtSize(bytes) {
+        const n = Number(bytes) || 0;
+        if (n < 1024) return n + ' B';
+        if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+        return (n / 1048576).toFixed(2) + ' MB';
+    }
+
+    // 多步骤日志：add 追加一行，progress 原地刷新最后一行
+    function makeStepLogger() {
+        const lines = [];
+        let progressIdx = -1;
+        const render = () => appendLog(lines.join('\n'));
+        return {
+            add(text) { progressIdx = -1; lines.push(text); render(); },
+            progress(text) {
+                if (progressIdx < 0) { lines.push(text); progressIdx = lines.length - 1; }
+                else lines[progressIdx] = text;
+                render();
+            }
+        };
+    }
+
+    function updateStatus(running) {
+        const badge = document.getElementById('cns_status_badge');
+        if (badge) {
+            badge.textContent = running ? '运行中' : '已停止';
+            badge.className = 'cns-status-badge ' + (running ? 'running' : 'stopped');
+        }
+        const mainDot = document.getElementById('main_status_dot');
+        if (mainDot) {
+            mainDot.className = 'cns-main-dot ' + (running ? 'running' : 'stopped');
+        }
+    }
+
+    async function isCnsRunning() {
+        const scriptChk = await runShellWithRoot(`[ -f '${CNS_DIR}/start.sh' ] && echo EXISTS || echo NO`);
+        const noScript = !parseResult(scriptChk).includes('EXISTS');
+
+        let res = await runShellWithRoot(`pgrep -x '${CNS_PROCESS_NAME}' 2>/dev/null`);
+        let out = parseResult(res).trim();
+        if (/\d/.test(out)) {
+            return { running: true, info: 'PID: ' + out.split(/\s+/).join(', '), noScript };
+        }
+
+        res = await runShellWithRoot(`pgrep -f '/data/cns' 2>/dev/null`);
+        out = parseResult(res).trim();
+        if (/\d/.test(out)) {
+            return { running: true, info: 'PID: ' + out.split(/\s+/).join(', '), noScript };
+        }
+
+        res = await runShellWithRoot("ps 2>/dev/null | grep '/data/cns' | grep -v grep");
+        out = parseResult(res).trim();
+        if (out) {
+            const pidMatch = out.match(/^\s*\S+\s+(\d+)/);
+            const pid = pidMatch ? pidMatch[1] : '?';
+            return { running: true, info: 'PID: ' + pid, noScript };
+        }
+
+        return { running: false, info: '', noScript };
+    }
+
+    function statusText(r) {
+        if (r.noScript) return '未检测到 CNS 脚本，请先创建 /data/cns 并放入脚本';
+        return r.running ? 'CNS 正在运行' + (r.info ? ' (' + r.info + ')' : '') : 'CNS 未运行';
+    }
+
+    async function runCnsScript(scriptName, actionDesc) {
+        let path;
+        if (scriptName === '生成配置.sh') {
+            path = CNS_UP_SCRIPT;
+        } else {
+            path = CNS_DIR + '/' + scriptName;
+        }
+        const check = await runShellWithRoot(`[ -f '${path}' ] && echo EXISTS || echo NO`);
+        if (!parseResult(check).includes('EXISTS')) {
+            appendLog(`脚本 ${path} 不存在，无法${actionDesc || '执行'}`);
+            return;
+        }
+        appendLog(`正在${actionDesc || '执行'} ${path} ...`);
+        const res = await runShellWithRoot(`sh ${path}`, 30000);
+        const out = parseResult(res);
+        appendLog(out);
+        if (scriptName === 'status.sh') {
+            const running = /running|run|active|启动|运行/i.test(out);
+            if (running !== undefined) updateStatus(running);
+        }
+        setTimeout(async () => {
+            const st = await isCnsRunning();
+            updateStatus(st.running);
+        }, 1500);
+    }
+
+    // --- 检测公网IP ---
+    async function checkPublicIP() {
+        appendLog('正在检测公网IP (ip.3322.net) ...');
+        // 优先使用 curl，若失败则使用 wget
+        let cmd = `curl -s --connect-timeout 10 ip.3322.net 2>/dev/null`;
+        let res = await runShellWithRoot(cmd, 15000);
+        let ip = parseResult(res).trim();
+        if (!ip || ip === '' || /error|fail|not found/i.test(ip)) {
+            cmd = `wget -q -O - --timeout=10 ip.3322.net 2>/dev/null`;
+            res = await runShellWithRoot(cmd, 15000);
+            ip = parseResult(res).trim();
+        }
+        if (ip && !/error|fail|not found|timeout/i.test(ip) && /^\d+\.\d+\.\d+\.\d+$/.test(ip)) {
+            appendLog('公网IP: ' + ip);
+        } else {
+            appendLog('获取IP失败，可能无网络连接或服务不可用');
+        }
+    }
+
+    // --- 使用说明弹窗 ---
+    function showHelpModal() {
+        if (document.getElementById('cns_help_modal')) return;
+        const modal = document.createElement('div');
+        modal.id = 'cns_help_modal';
+        modal.className = 'cns-modal';
+        modal.style.zIndex = '10000';
+        modal.innerHTML = `
+            <div class="cns-card cns-help-card">
+                <div class="cns-header"><span>使用说明</span></div>
+                <div class="cns-help-box">
+                    <div class="cns-help-section">
+                        <div class="cns-help-title">搭建 CNS 篇</div>
+                        <div>1. 使用前先点击「下载 CNS」下载脚本</div>
+                        <div>2. 点击「修改配置」，在选择配置文件中，选择 cns配置.ini，填写自己搭或者他人搭建的 CNS 信息并保存</div>
+                        <div>3. 启动</div>
+                    </div>
+                    <div class="cns-help-section">
+                        <div class="cns-help-title">百度直连或其他篇</div>
+                        <div>1. 自己上传配置后，点击「修改配置」，modeName 改成自己上传的配置名称，启动即可</div>
+                    </div>
+                </div>
+                <div class="cns-bottom-bar">
+                    <button id="btn_help_close" class="cns-close-btn">关 闭</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        document.getElementById('btn_help_close').onclick = () => modal.remove();
+        modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+    }
+
+    // --- 下载并安装 CNS ---
+    async function downloadAndInstallCns(url) {
+        const log = makeStepLogger();
+        const btn = document.getElementById('btn_download');
+        if (btn) btn.disabled = true;
+        const fail = (msg, toast) => {
+            log.add(msg + '\n(临时文件保留在 ' + DL_TMP_DIR + '，可重试或手动清理)');
+            showConfigToast(toast || '下载失败');
+        };
+        try {
+            log.add('下载地址: ' + url);
+            await runShellWithRoot(`rm -rf ${shQuote(DL_TMP_DIR)}; mkdir -p ${shQuote(DL_TMP_DIR)}`);
+
+            // 后台下载脚本：避免长时间下载被前端超时打断
+            const dlScript = [
+                '#!/bin/sh',
+                'URL=' + shQuote(url),
+                'OUT=' + shQuote(DL_ZIP),
+                'LOG=' + shQuote(DL_LOG),
+                'CODE=' + shQuote(DL_CODE),
+                'if command -v curl >/dev/null 2>&1; then',
+                '  curl -fsS -L --connect-timeout 15 -o "$OUT" "$URL" 2>"$LOG"',
+                '  echo $? > "$CODE"',
+                'elif command -v wget >/dev/null 2>&1; then',
+                '  wget -T 20 -O "$OUT" "$URL" 2>"$LOG"',
+                '  echo $? > "$CODE"',
+                'else',
+                '  echo "curl / wget 均不可用" > "$LOG"',
+                '  echo 127 > "$CODE"',
+                'fi',
+                ''
+            ].join('\n');
+            await runShellWithRoot(`echo ${shQuote(utf8ToBase64(dlScript))} | base64 -d > ${shQuote(DL_SCRIPT)}`);
+
+            const started = parseResult(await runShellWithRoot(
+                `if command -v nohup >/dev/null 2>&1; then (nohup sh ${shQuote(DL_SCRIPT)} >/dev/null 2>&1 &); else (sh ${shQuote(DL_SCRIPT)} >/dev/null 2>&1 &); fi; echo STARTED`
+            ));
+            if (!started.includes('STARTED')) return fail('× 无法启动下载任务');
+
+            let waited = 0, code = null;
+            while (waited < DL_MAX_WAIT_MS) {
+                await sleep(1500);
+                waited += 1500;
+                const st = parseResult(await runShellWithRoot(
+                    `if [ -f ${shQuote(DL_CODE)} ]; then printf 'DONE:'; cat ${shQuote(DL_CODE)}; elif [ -f ${shQuote(DL_ZIP)} ]; then printf 'SIZE:'; wc -c < ${shQuote(DL_ZIP)}; else printf 'SIZE:0'; fi`
+                )).trim();
+                if (st.indexOf('DONE:') === 0) {
+                    code = parseInt(st.replace(/[^0-9-]/g, ''), 10);
+                    break;
+                }
+                const size = parseInt(st.replace(/[^0-9]/g, ''), 10) || 0;
+                log.progress('下载中... 已接收 ' + fmtSize(size) + '  (' + Math.round(waited / 1000) + 's)');
+            }
+
+            if (code === null) {
+                await runShellWithRoot(`pkill -f ${shQuote(DL_SCRIPT)} 2>/dev/null; pkill -f ${shQuote(DL_ZIP)} 2>/dev/null`);
+                return fail('× 下载超时（超过 ' + Math.round(DL_MAX_WAIT_MS / 1000) + ' 秒），已中止', '下载超时');
+            }
+            if (code !== 0) {
+                const errLog = parseResult(await runShellWithRoot(`head -c 500 ${shQuote(DL_LOG)} 2>/dev/null`));
+                return fail('× 下载失败 (退出码 ' + code + ')' + (errLog && errLog !== '(无输出)' ? '\n' + errLog : ''));
+            }
+
+            const sizeOut = parseResult(await runShellWithRoot(
+                `if [ -f ${shQuote(DL_ZIP)} ]; then wc -c < ${shQuote(DL_ZIP)}; else echo 0; fi`
+            )).replace(/[^0-9]/g, '');
+            const zipSize = parseInt(sizeOut, 10) || 0;
+            if (zipSize <= 0) return fail('× 下载文件为空，请检查链接');
+            log.add('✓ 下载完成，已重命名为 cns.zip (' + fmtSize(zipSize) + ')');
+
+            // 校验是否为 zip（PK 头），避免把网页/重定向页当成压缩包
+            const magic = parseResult(await runShellWithRoot(`head -c 2 ${shQuote(DL_ZIP)} 2>/dev/null`));
+            if (magic.indexOf('PK') !== 0) {
+                const preview = parseResult(await runShellWithRoot(`head -c 200 ${shQuote(DL_ZIP)} 2>/dev/null`));
+                return fail('× 下载内容不是 zip 压缩包，请确认是直链下载地址\n内容预览: ' + preview, '不是 zip 文件');
+            }
+
+            log.add('正在解压...');
+            const tool = parseResult(await runShellWithRoot(
+                `if command -v unzip >/dev/null 2>&1; then echo UNZIP; elif command -v busybox >/dev/null 2>&1; then echo BUSYBOX; else echo NONE; fi`
+            ));
+            if (tool.includes('NONE')) return fail('× 设备上没有 unzip（也没有 busybox），无法解压', '缺少 unzip');
+            const unzipBin = tool.includes('UNZIP') ? 'unzip' : 'busybox unzip';
+            await runShellWithRoot(`mkdir -p ${shQuote(DL_EXTRACT)}`);
+            const unzipOut = parseResult(await runShellWithRoot(
+                `${unzipBin} -o ${shQuote(DL_ZIP)} -d ${shQuote(DL_EXTRACT)} 2>&1`, 120000
+            ));
+            const entries = parseResult(await runShellWithRoot(`ls -A ${shQuote(DL_EXTRACT)} 2>/dev/null`))
+                .split('\n').map(s => s.trim())
+                .filter(s => s && s !== '__MACOSX' && s !== '.DS_Store' && s !== '(无输出)');
+            if (!entries.length) return fail('× 解压失败\n' + unzipOut, '解压失败');
+
+            // 压缩包内只有一个顶层目录时，取该目录作为 cns 目录内容
+            let payload = DL_EXTRACT;
+            if (entries.length === 1) {
+                const only = DL_EXTRACT + '/' + entries[0];
+                const isDir = parseResult(await runShellWithRoot(`[ -d ${shQuote(only)} ] && echo DIR || echo FILE`));
+                if (isDir.includes('DIR')) payload = only;
+            }
+            log.add('✓ 解压完成' + (payload === DL_EXTRACT ? '' : '（顶层目录: ' + entries[0] + '）'));
+
+            const dirExists = parseResult(await runShellWithRoot(`[ -d ${shQuote(CNS_DIR)} ] && echo EXISTS || echo NO`)).includes('EXISTS');
+            if (dirExists) {
+                if (!(await showCnsConfirm(CNS_DIR + ' 已存在。\n继续将停止运行中的 CNS 并删除原目录后覆盖安装（原配置会丢失），确定吗？', '覆盖安装', true))) {
+                    log.add('已取消安装，下载文件保留在 ' + DL_ZIP);
+                    showConfigToast('已取消安装');
+                    return;
+                }
+                log.add('正在停止旧的 CNS 并删除原目录...');
+                await runShellWithRoot(`if [ -f '${CNS_DIR}/stop.sh' ]; then sh '${CNS_DIR}/stop.sh'; fi; pkill -x '${CNS_PROCESS_NAME}' 2>/dev/null; pkill -f '${CNS_DIR}' 2>/dev/null`);
+                await runShellWithRoot(`rm -rf ${shQuote(CNS_DIR)}`);
+            }
+
+            const mvOut = parseResult(await runShellWithRoot(`mv ${shQuote(payload)} ${shQuote(CNS_DIR)} 2>&1`));
+            const installed = parseResult(await runShellWithRoot(`[ -d ${shQuote(CNS_DIR)} ] && echo EXISTS || echo NO`)).includes('EXISTS');
+            if (!installed) return fail('× 移动到 ' + CNS_DIR + ' 失败' + (mvOut && mvOut !== '(无输出)' ? '\n' + mvOut : ''), '安装失败');
+            log.add('✓ 文件夹已放入 /data/ 并命名为 cns');
+
+            const chmodOut = parseResult(await runShellWithRoot(`chmod -R 777 ${shQuote(CNS_DIR)} 2>&1`));
+            if (chmodOut && chmodOut !== '(无输出)' && /denied|permission|not permitted|error|失败/i.test(chmodOut)) {
+                log.add('△ 赋权提示: ' + chmodOut);
+            } else {
+                log.add('✓ 已对 ' + CNS_DIR + ' 内所有文件赋予 777 权限');
+            }
+
+            const fileList = parseResult(await runShellWithRoot(`ls -A ${shQuote(CNS_DIR)} 2>/dev/null | head -n 40`));
+            log.add('目录内容:\n' + fileList);
+
+            await runShellWithRoot(`rm -rf ${shQuote(DL_TMP_DIR)}`);
+            try { localStorage.setItem(DL_URL_KEY, url); } catch(e) {}
+            showConfigToast('CNS 安装完成');
+
+            const infoEl = document.getElementById('cns_info');
+            if (infoEl) infoEl.textContent = ' 已安装';
+            const st = await isCnsRunning();
+            updateStatus(st.running);
+            updateAutostartBtn(await isAutostartEnabled());
+        } catch(e) {
+            fail('× 下载安装出错: ' + String(e));
+        } finally {
+            if (btn) btn.disabled = false;
+        }
+    }
+
+    function showDownloadModal() {
+        if (document.getElementById('cns_download_modal')) return;
+        let lastUrl = '';
+        try { lastUrl = localStorage.getItem(DL_URL_KEY) || ''; } catch(e) {}
+        const tipDefault = '下载后自动重命名为 cns.zip，自动解压并放到 ' + CNS_DIR + '，然后赋予 777 权限';
+        const modal = document.createElement('div');
+        modal.id = 'cns_download_modal';
+        modal.className = 'cns-modal';
+        modal.style.zIndex = '10000';
+        modal.innerHTML = `
+            <div class="cns-card cns-download-card">
+                <div class="cns-header"><span>下载 CNS</span></div>
+                <div class="cns-subtitle">填写 CNS 压缩包 (zip) 的下载直链</div>
+                <input id="cns_download_input" class="cns-input" type="text" inputmode="url" spellcheck="false" autocomplete="off" placeholder="https://example.com/cns.zip" />
+                <div id="cns_download_tip" class="cns-config-feedback"></div>
+                <div class="cns-download-row">
+                    <button id="btn_download_cancel" class="cns-btn">取 消</button>
+                    <button id="btn_download_ok" class="cns-save-btn">开始下载</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        const input = document.getElementById('cns_download_input');
+        const tip = document.getElementById('cns_download_tip');
+        input.value = lastUrl || DL_DEFAULT_URL;
+        tip.textContent = tipDefault;
+        setTimeout(() => { try { input.focus(); } catch(e) {} }, 60);
+
+        const close = () => modal.remove();
+        input.oninput = () => { tip.textContent = tipDefault; tip.style.color = ''; };
+        const start = async () => {
+            const url = String(input.value || '').trim();
+            if (!isValidHttpUrl(url)) {
+                tip.textContent = '请填写正确的 http / https 下载直链';
+                tip.style.color = '#ff5252';
+                return;
+            }
+            try { localStorage.setItem(DL_URL_KEY, url); } catch(e) {}
+            close();
+            await downloadAndInstallCns(url);
+        };
+        document.getElementById('btn_download_cancel').onclick = close;
+        document.getElementById('btn_download_ok').onclick = start;
+        input.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); start(); } };
+        modal.onclick = (e) => { if (e.target === modal) close(); };
+    }
+
+    async function isAutostartEnabled() {
+        const res = await runShellWithRoot(`grep -q '${CNS_DIR}/start.sh' '${AUTOSTART_SCRIPT}' && echo EXISTS || echo NO`);
+        return parseResult(res).includes('EXISTS');
+    }
+
+    function updateAutostartBtn(on) {
+        const btn = document.getElementById('btn_autostart');
+        if (btn) btn.textContent = on ? '关闭开机自启' : '开启开机自启';
+    }
+
+    async function setAutostart(enable) {
+        if (enable) {
+            const cmd = `[ -f '${CNS_DIR}/start.sh' ] && sh '${CNS_DIR}/start.sh'`;
+            await runShellWithRoot(`grep -qxF '${cmd}' '${AUTOSTART_SCRIPT}' || echo '${cmd}' >> '${AUTOSTART_SCRIPT}'`);
+        } else {
+            await runShellWithRoot(`sed -i '\\|${CNS_DIR}/start.sh|d' '${AUTOSTART_SCRIPT}'`);
+        }
+        const on = await isAutostartEnabled();
+        updateAutostartBtn(on);
+        appendLog(enable ? '开机自启已开启（写入 ' + AUTOSTART_SCRIPT + '）' : '开机自启已关闭');
+        showConfigToast(enable ? '自启已开启' : '自启已关闭');
+    }
+
+    async function uninstallCns() {
+        if (!(await showCnsConfirm('确定卸载 CNS 吗？\n将删除 /data/cns 目录并移除自启脚本。', '卸 载', true))) {
+            appendLog('已取消卸载');
+            return;
+        }
+        appendLog('正在卸载 CNS ...');
+        showConfigToast('正在卸载...');
+        try {
+            await runShellWithRoot(`if [ -f '${CNS_DIR}/stop.sh' ]; then sh '${CNS_DIR}/stop.sh'; fi; pkill -x '${CNS_PROCESS_NAME}' 2>/dev/null; pkill -f '/data/cns' 2>/dev/null`);
+            await runShellWithRoot(`rm -rf '${CNS_DIR}'`);
+            await runShellWithRoot(`sed -i '\\|${CNS_DIR}/start.sh|d' '${AUTOSTART_SCRIPT}'`);
+            const check = await runShellWithRoot(`[ -d '${CNS_DIR}' ] && echo YES || echo NO`);
+            const gone = !parseResult(check).includes('YES');
+            updateStatus(false);
+            updateAutostartBtn(false);
+            if (gone) {
+                appendLog('✓ CNS 已卸载');
+                showConfigToast('卸载成功');
+            } else {
+                appendLog('× 卸载失败，/data/cns 仍存在');
+                showConfigToast('卸载失败');
+            }
+        } catch(e) {
+            appendLog('卸载出错: ' + String(e));
+            showConfigToast('卸载失败');
+        }
+    }
+
+    function showConfigToast(text) {
+        const old = document.getElementById('cns_config_toast');
+        if (old) old.remove();
+        const toast = document.createElement('div');
+        toast.id = 'cns_config_toast';
+        toast.className = 'cns-config-toast';
+        toast.textContent = text;
+        document.body.appendChild(toast);
+        setTimeout(() => { toast.classList.add('show'); }, 10);
+        setTimeout(() => {
+            toast.classList.remove('show');
+            setTimeout(() => toast.remove(), 300);
+        }, 1200);
+    }
+
+    let activeConfirmDone = null;
+    function showCnsConfirm(message, okLabel, danger) {
+        return new Promise((resolve) => {
+            if (activeConfirmDone) activeConfirmDone(false);
+            const old = document.getElementById('cns_confirm_modal');
+            if (old) old.remove();
+            const modal = document.createElement('div');
+            modal.id = 'cns_confirm_modal';
+            modal.className = 'cns-modal';
+            modal.style.zIndex = '10002';
+            modal.innerHTML = `
+                <div class="cns-card cns-confirm-card">
+                    <div class="cns-confirm-text"></div>
+                    <div class="cns-btn-row">
+                        <button id="cns_confirm_cancel" class="cns-btn">取 消</button>
+                        <button id="cns_confirm_ok" class="${danger ? 'cns-danger-btn' : 'cns-save-btn'}">${okLabel || '确 定'}</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            modal.querySelector('.cns-confirm-text').textContent = message;
+            const done = (val) => { activeConfirmDone = null; modal.remove(); resolve(val); };
+            activeConfirmDone = done;
+            document.getElementById('cns_confirm_cancel').onclick = () => done(false);
+            document.getElementById('cns_confirm_ok').onclick = () => done(true);
+            modal.onclick = (e) => { if (e.target === modal) done(false); };
+        });
+    }
+
+    function utf8ToBase64(str) {
+        if (window.TextEncoder) {
+            const bytes = new TextEncoder().encode(str);
+            let bin = '';
+            for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+            return btoa(bin);
+        }
+        return btoa(unescape(encodeURIComponent(str)));
+    }
+    function arrayBufferToBase64(buffer) {
+        const bytes = new Uint8Array(buffer);
+        let bin = '';
+        for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+        return btoa(bin);
+    }
+    function readFileAsBase64(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+                try { resolve(arrayBufferToBase64(reader.result)); } catch(e) { reject(e); }
+            };
+            reader.onerror = () => reject(reader.error || new Error('读取文件失败'));
+            reader.readAsArrayBuffer(file);
+        });
+    }
+
+    function isConfigDirty() {
+        const ta = document.getElementById('cns_config_text');
+        return !!ta && ta.value !== configSavedContent;
+    }
+    function setConfigFeedback(text, ok) {
+        const fb = document.getElementById('cns_config_feedback');
+        if (fb) { fb.textContent = text; fb.style.color = ok ? '#00e676' : '#ff5252'; }
+    }
+    function updateConfigBadge(file) {
+        const badge = document.getElementById('cns_config_badge');
+        if (badge) badge.textContent = file || '-';
+    }
+
+    async function fillConfigSelect() {
+        const sel = document.getElementById('cns_config_select');
+        const files = [];
+        const res1 = await runShellWithRoot(`ls ${CNS_DIR} 2>/dev/null | grep -E '\\.(conf|ini|txt|md)$' || echo ''`);
+        const rootFiles = parseResult(res1).split('\n').map(s => s.trim()).filter(Boolean);
+        for (const f of rootFiles) {
+            if (!files.some(item => item.name === f)) files.push({ name: f, path: CNS_DIR + '/' + f });
+        }
+        const res2 = await runShellWithRoot(`ls ${CNS_MODE_DIR} 2>/dev/null | grep -E '\\.(conf|ini|txt|md)$' || echo ''`);
+        const modeFiles = parseResult(res2).split('\n').map(s => s.trim()).filter(Boolean);
+        for (const f of modeFiles) {
+            const fullName = 'makeCNSMode/' + f;
+            if (!files.some(item => item.name === fullName)) {
+                files.push({ name: fullName, path: CNS_MODE_DIR + '/' + f });
+            }
+        }
+        const existsMode = await runShellWithRoot(`[ -f '${CNS_MODE_FILE}' ] && echo EXISTS || echo NO`);
+        if (parseResult(existsMode).includes('EXISTS')) {
+            if (!files.some(item => item.name === 'makeCNSMode/cns配置.ini')) {
+                files.push({ name: 'makeCNSMode/cns配置.ini', path: CNS_MODE_FILE });
+            }
+        }
+        files.sort((a, b) => {
+            if (a.name === 'config.ini') return -1;
+            if (b.name === 'config.ini') return 1;
+            if (a.name === 'makeCNSMode/cns配置.ini') return -1;
+            if (b.name === 'makeCNSMode/cns配置.ini') return 1;
+            return a.name.localeCompare(b.name);
+        });
+        if (sel) {
+            if (files.length) {
+                sel.innerHTML = files.map(f => '<option value="' + f.name + '">' + f.name + '</option>').join('');
+            } else {
+                sel.innerHTML = '<option value="">无配置文件</option>';
+            }
+        }
+        return files;
+    }
+
+    async function loadConfigFile(fileName) {
+        const ta = document.getElementById('cns_config_text');
+        if (!ta || !fileName) return;
+        configCurrentFile = fileName;
+        updateConfigBadge(fileName);
+        ta.disabled = true;
+        ta.value = '';
+        setConfigFeedback('正在读取 ' + fileName + ' ...', true);
+        let path;
+        if (fileName.startsWith('makeCNSMode/')) {
+            const base = fileName.replace('makeCNSMode/', '');
+            path = CNS_MODE_DIR + '/' + base;
+        } else {
+            path = CNS_DIR + '/' + fileName;
+        }
+        try {
+            const res = await runShellWithRoot(`cat '${path}'`);
+            const text = parseResult(res);
+            configSavedContent = text;
+            ta.value = text;
+            setConfigFeedback(text === '' ? (fileName + ' 是空文件') : ('已加载 ' + fileName), true);
+        } catch(e) {
+            configSavedContent = '';
+            setConfigFeedback('读取失败: ' + String(e), false);
+        } finally {
+            ta.disabled = false;
+        }
+    }
+
+    async function saveConfigFile() {
+        const ta = document.getElementById('cns_config_text');
+        const fileName = configCurrentFile;
+        if (!ta || !fileName) return;
+        const btn = document.getElementById('btn_config_save');
+        if (btn) btn.disabled = true;
+        setConfigFeedback('正在保存 ' + fileName + ' ...', true);
+        let path;
+        if (fileName.startsWith('makeCNSMode/')) {
+            const base = fileName.replace('makeCNSMode/', '');
+            path = CNS_MODE_DIR + '/' + base;
+            await runShellWithRoot(`mkdir -p '${CNS_MODE_DIR}'`);
+        } else {
+            path = CNS_DIR + '/' + fileName;
+        }
+        try {
+            const b64 = utf8ToBase64(ta.value);
+            const res = await runShellWithRoot(`echo '${b64}' | base64 -d > '${path}'`);
+            const out = parseResult(res).trim();
+            if (out && /not found|no such|permission|denied|error|失败/i.test(out)) {
+                setConfigFeedback('保存失败: ' + out, false);
+                appendLog('保存配置失败[' + fileName + ']: ' + out);
+                return;
+            }
+            configSavedContent = ta.value;
+            setConfigFeedback(fileName + ' 保存成功', true);
+            appendLog('配置 ' + fileName + ' 已保存');
+            showConfigToast('修改成功');
+            const modal = document.getElementById('cns_config_modal');
+            if (modal) modal.remove();
+        } catch(e) {
+            setConfigFeedback('保存失败: ' + String(e), false);
+            appendLog('保存配置出错[' + fileName + ']: ' + String(e));
+        } finally {
+            if (btn) btn.disabled = false;
+        }
+    }
+
+    async function deleteConfigFile() {
+        const fileName = configCurrentFile;
+        if (!fileName) return;
+        if (!(await showCnsConfirm('确定删除 ' + fileName + ' 吗？\n删除后不可恢复！', '删 除', true))) return;
+        const btn = document.getElementById('btn_config_delete');
+        if (btn) btn.disabled = true;
+        setConfigFeedback('正在删除 ' + fileName + ' ...', true);
+        let path;
+        if (fileName.startsWith('makeCNSMode/')) {
+            const base = fileName.replace('makeCNSMode/', '');
+            path = CNS_MODE_DIR + '/' + base;
+        } else {
+            path = CNS_DIR + '/' + fileName;
+        }
+        try {
+            const res = await runShellWithRoot(`rm -f '${path}'`);
+            const out = parseResult(res).trim();
+            if (out && /not found|no such|permission|denied|error|失败/i.test(out)) {
+                setConfigFeedback('删除失败: ' + out, false);
+                appendLog('删除配置失败[' + fileName + ']: ' + out);
+                return;
+            }
+            appendLog('配置 ' + fileName + ' 已删除');
+            showConfigToast('删除成功');
+            const modal = document.getElementById('cns_config_modal');
+            if (modal) modal.remove();
+        } catch(e) {
+            setConfigFeedback('删除失败: ' + String(e), false);
+            appendLog('删除配置出错[' + fileName + ']: ' + String(e));
+        } finally {
+            if (btn) btn.disabled = false;
+        }
+    }
+
+    async function closeConfigModal() {
+        const modal = document.getElementById('cns_config_modal');
+        if (!modal) return;
+        if (isConfigDirty() && !(await showCnsConfirm('当前配置修改未保存，确定放弃吗？', '放弃修改', true))) return;
+        modal.remove();
+    }
+
+    function pickConfigFiles() {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.multiple = true;
+        input.style.display = 'none';
+        document.body.appendChild(input);
+        input.onchange = async () => {
+            const picked = Array.from(input.files || []);
+            input.remove();
+            await uploadConfigFiles(picked);
+        };
+        input.click();
+    }
+
+    async function uploadConfigFiles(picked) {
+        if (!picked.length) return;
+        appendLog('开始上传 ' + picked.length + ' 个文件...');
+        const results = [];
+        let okCount = 0, cancelCount = 0, failCount = 0;
+        for (const file of picked) {
+            let name = String(file.name || '').split(/[\\/]/).pop().replace(/['"`$\\]/g, '').trim();
+            if (!name || name === '.' || name === '..') { results.push('跳过无效文件名: ' + (file.name || '(未知)')); failCount++; continue; }
+            let targetPath;
+            if (name === 'cns配置.ini' || name === '生成配置.sh') {
+                targetPath = CNS_MODE_DIR + '/' + name;
+                await runShellWithRoot(`mkdir -p '${CNS_MODE_DIR}'`);
+            } else {
+                targetPath = CNS_DIR + '/' + name;
+            }
+            try {
+                const existsRes = await runShellWithRoot(`[ -f '${targetPath}' ] && echo EXISTS || echo NO`);
+                if (parseResult(existsRes).includes('EXISTS') && !(await showCnsConfirm('已存在 ' + name + '，是否覆盖？', '覆 盖', true))) {
+                    results.push('已取消: ' + name);
+                    cancelCount++;
+                    continue;
+                }
+                const b64 = await readFileAsBase64(file);
+                const res = await runShellWithRoot(`echo '${b64}' | base64 -d > '${targetPath}'`);
+                const out = parseResult(res).trim();
+                if (out && /not found|no such|permission|denied|error|失败/i.test(out)) {
+                    results.push('失败: ' + name + ' (' + out + ')');
+                    failCount++;
+                    continue;
+                }
+                results.push('成功: ' + name);
+                okCount++;
+            } catch(e) {
+                results.push('失败: ' + name + ' (' + String(e) + ')');
+                failCount++;
+            }
+        }
+        appendLog('上传结束\n' + results.join('\n'));
+        if (okCount > 0) showConfigToast('上传完成 ' + okCount + ' 个');
+        else if (cancelCount > 0 && failCount === 0) showConfigToast('已取消上传');
+        else showConfigToast('上传失败');
+        const sel = document.getElementById('cns_config_select');
+        if (sel) {
+            const files = await fillConfigSelect();
+            if (!files.length) return;
+            const lastUploaded = picked[picked.length-1]?.name;
+            if (lastUploaded) {
+                const found = files.find(f => f.name === lastUploaded || f.name === 'makeCNSMode/'+lastUploaded);
+                if (found) sel.value = found.name;
+                else sel.value = files[0].name;
+            } else {
+                sel.value = files[0].name;
+            }
+            await loadConfigFile(sel.value);
+        }
+    }
+
+    function openConfigModal() {
+        if (document.getElementById('cns_config_modal')) return;
+        const modal = document.createElement('div');
+        modal.id = 'cns_config_modal';
+        modal.className = 'cns-modal';
+        modal.style.zIndex = '10000';
+        modal.innerHTML = `
+            <div class="cns-card">
+                <div class="cns-header">
+                    <span>修改配置</span>
+                    <span id="cns_config_badge" class="cns-config-file">-</span>
+                </div>
+                <div class="cns-subtitle">选择配置文件</div>
+                <div class="cns-select-row">
+                    <select id="cns_config_select" class="cns-select"></select>
+                    <button id="btn_config_delete" class="cns-danger-btn">删除</button>
+                </div>
+                <textarea id="cns_config_text" class="cns-edit-box" spellcheck="false" placeholder="配置文件内容"></textarea>
+                <div id="cns_config_feedback" class="cns-config-feedback">正在加载...</div>
+                <div class="cns-bottom-bar">
+                    <div class="cns-btn-row">
+                        <button id="btn_config_cancel" class="cns-btn">取 消</button>
+                        <button id="btn_config_save" class="cns-save-btn">保 存</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        const sel = document.getElementById('cns_config_select');
+        const ta = document.getElementById('cns_config_text');
+
+        sel.onchange = async () => {
+            if (isConfigDirty() && !(await showCnsConfirm('当前配置修改未保存，确定切换吗？', '继续切换', true))) { sel.value = configCurrentFile; return; }
+            await loadConfigFile(sel.value);
+        };
+        ta.oninput = () => { setConfigFeedback(isConfigDirty() ? '有未保存的修改' : '内容未改动', true); };
+        document.getElementById('btn_config_cancel').onclick = () => closeConfigModal();
+        document.getElementById('btn_config_delete').onclick = () => deleteConfigFile();
+        document.getElementById('btn_config_save').onclick = () => saveConfigFile();
+        modal.onclick = (e) => { if (e.target === modal) closeConfigModal(); };
+
+        (async () => {
+            const files = await fillConfigSelect();
+            if (!files.length) {
+                updateConfigBadge('-');
+                setConfigFeedback('当前无配置文件，请先上传', true);
+                ta.value = '';
+                ta.disabled = true;
+                return;
+            }
+            let defaultFile = files.find(f => f.name === 'config.ini') || files.find(f => f.name === 'makeCNSMode/cns配置.ini') || files[0];
+            sel.value = defaultFile.name;
+            await loadConfigFile(defaultFile.name);
+        })();
+    }
+
+    function showMainModal() {
+        if (document.getElementById(MODAL_ID)) return;
+        const modal = document.createElement('div');
+        modal.id = MODAL_ID;
+        modal.className = 'cns-modal';
+        modal.innerHTML = `
+            <div class="cns-card">
+                <div class="cns-header">
+                    <span>CNS 脚本控制</span>
+                    <span id="cns_status_badge" class="cns-status-badge stopped">未检测</span>
+                </div>
+                <div class="cns-subtitle">脚本操作<span id="cns_info" class="cns-ip-info"></span></div>
+                <div class="cns-btn-grid">
+                    <button id="btn_start" class="cns-btn">▶ 启动 (start.sh)</button>
+                    <button id="btn_stop" class="cns-btn">⏹ 停止 (stop.sh)</button>
+                    <button id="btn_status" class="cns-btn">📊 检测状态 (status.sh)</button>
+                    <button id="btn_gen" class="cns-btn">⚙ 生成配置 (生成配置.sh)</button>
+                    <button id="btn_ip" class="cns-btn">🌐 检测IP</button>
+                    <button id="btn_config" class="cns-btn">修改配置</button>
+                    <button id="btn_upload" class="cns-btn">上传配置</button>
+                    <button id="btn_download" class="cns-btn">⬇下载 CNS</button>
+                    <button id="btn_autostart" class="cns-btn">开机自启</button>
+                    <button id="btn_uninstall" class="cns-btn">卸载 CNS</button>
+                    <button id="btn_help" class="cns-btn">📖 使用说明</button>
+                </div>
+                <div id="cns_log" class="cns-log-box">等待操作...</div>
+                <div class="cns-bottom-bar">
+                    <button id="btn_modal_close" class="cns-close-btn">关 闭</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        (async () => {
+            appendLog('正在自动检测状态...');
+            const st = await isCnsRunning();
+            appendLog('状态: ' + statusText(st));
+            updateStatus(st.running);
+            updateAutostartBtn(await isAutostartEnabled());
+            const infoEl = document.getElementById('cns_info');
+            if (infoEl) {
+                const dirCheck = await runShellWithRoot(`[ -d '${CNS_DIR}' ] && echo EXISTS || echo NO`);
+                if (parseResult(dirCheck).includes('EXISTS')) {
+                    infoEl.textContent = ' 已安装';
+                } else {
+                    infoEl.textContent = ' 未安装';
+                }
+            }
+        })();
+
+        document.getElementById('btn_start').onclick = async () => {
+            const dirCheck = await runShellWithRoot(`[ -d '${CNS_DIR}' ] && echo EXISTS || echo NO`);
+            if (!parseResult(dirCheck).includes('EXISTS')) {
+                appendLog('目录 /data/cns 不存在，请先创建并放入脚本');
+                return;
+            }
+            await runCnsScript('start.sh', '启动');
+            setTimeout(async () => {
+                const st = await isCnsRunning();
+                updateStatus(st.running);
+            }, 1000);
+        };
+        document.getElementById('btn_stop').onclick = async () => {
+            await runCnsScript('stop.sh', '停止');
+            setTimeout(async () => {
+                const st = await isCnsRunning();
+                updateStatus(st.running);
+            }, 1000);
+        };
+        document.getElementById('btn_status').onclick = async () => {
+            await runCnsScript('status.sh', '检测状态');
+        };
+        document.getElementById('btn_gen').onclick = async () => {
+            const dirCheck = await runShellWithRoot(`[ -d '${CNS_MODE_DIR}' ] && echo EXISTS || echo NO`);
+            if (!parseResult(dirCheck).includes('EXISTS')) {
+                appendLog('目录 ' + CNS_MODE_DIR + ' 不存在，请先创建');
+                return;
+            }
+            await runCnsScript('生成配置.sh', '生成配置');
+            setTimeout(async () => {
+                const sel = document.getElementById('cns_config_select');
+                if (sel) {
+                    const files = await fillConfigSelect();
+                    if (files.length) {
+                        const target = files.find(f => f.name === 'makeCNSMode/cns配置.ini');
+                        if (target) sel.value = target.name;
+                        else sel.value = files[0].name;
+                        await loadConfigFile(sel.value);
+                    }
+                }
+            }, 1000);
+        };
+        // 新增IP检测按钮
+        document.getElementById('btn_ip').onclick = async () => {
+            await checkPublicIP();
+        };
+        document.getElementById('btn_config').onclick = () => openConfigModal();
+        document.getElementById('btn_upload').onclick = async () => {
+            const dirCheck = await runShellWithRoot(`[ -d '${CNS_DIR}' ] && echo EXISTS || echo NO`);
+            if (!parseResult(dirCheck).includes('EXISTS')) {
+                appendLog('目录 /data/cns 不存在，请先创建');
+                return;
+            }
+            pickConfigFiles();
+        };
+        // 新增下载 CNS 按钮
+        document.getElementById('btn_download').onclick = () => showDownloadModal();
+        document.getElementById('btn_autostart').onclick = async () => {
+            const on = await isAutostartEnabled();
+            await setAutostart(!on);
+        };
+        document.getElementById('btn_uninstall').onclick = () => uninstallCns();
+        // 新增使用说明按钮
+        document.getElementById('btn_help').onclick = () => showHelpModal();
+        document.getElementById('btn_modal_close').onclick = () => modal.remove();
+        modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+    }
+
+    const menuBox = collapseBtn_menu?.nextElementSibling?.querySelector('.collapse_box');
+    if (menuBox) {
+        const entryBtn = document.createElement('button');
+        entryBtn.innerHTML = 'CNS脚本控制<span class="cns-main-dot" id="main_status_dot"></span>';
+        entryBtn.onclick = showMainModal;
+        menuBox.appendChild(entryBtn);
+    }
+
+    (async () => {
+        try {
+            const st = await isCnsRunning();
+            updateStatus(st.running);
+        } catch(e) {}
+    })();
+})();
+//</script>
