@@ -1,13 +1,12 @@
 //<script>
 (() => {
+    // ========== 优化1：whoami 结果缓存（root 状态不会变，避免每次点按钮都 spawn root shell） ==========
+    let _rootCache = null
     const checkAdvanceFunc = async () => {
+        if (_rootCache !== null) return _rootCache
         const res = await runShellWithRoot('whoami')
-        if (res.content) {
-            if (res.content.includes('root')) {
-                return true
-            }
-        }
-        return false
+        _rootCache = !!(res.content && res.content.includes('root'))
+        return _rootCache
     }
 
     const createRandomString = (length = 8) => {
@@ -86,7 +85,7 @@
         }
     }
 
-    // ========== 修复：日志查看性能优化（增量读取 + 防抖 + 限制行数 + 文件大小检测） ==========
+    // ========== 优化2：日志查看（单条 shell 命令同时取大小+内容、5秒轮询、页面隐藏自动暂停） ==========
     const showDialog = (message, title = "提示", isLog = false) => {
         let timer = null
         const containerId = "toast_" + createRandomString(4)
@@ -137,6 +136,7 @@
             const clearBtn = el.querySelector(`#${id_clear}`)
             const rBtn = el.querySelector(`#${id_refresh}`)
             const msg_el = el.querySelector(`.content_message`)
+            const LOG_PATH = '/sdcard/Clash内核日志.txt'
             
             // 状态追踪
             let lastLineCount = 0
@@ -146,41 +146,42 @@
             
             const refresh = async (flag = false) => {
                 if (!msg_el || isFetching) return
+                // 页面在后台时暂停轮询，减少设备负担
+                if (!flag && document.hidden) return
                 isFetching = true
                 
                 try {
-                    // 优化1：先获取文件大小，无变化则跳过
-                    const sizeRes = await runShellWithRoot(`stat -c%s /sdcard/Clash内核日志.txt 2>/dev/null || echo 0`)
-                    const currentSize = parseInt(sizeRes.content?.trim() || 0)
-                    
-                    if (!flag && currentSize === lastFileSize) {
-                        isFetching = false
-                        return  // 文件未变化，跳过
-                    }
-                    lastFileSize = currentSize
-                    
-                    // 优化2：使用 tail -n 只读取最后 N 行，避免读取整个大文件
-                    // 如果文件小于1000行则全量读取，否则只读尾部
-                    const cmd = currentSize > 50000 
-                        ? `tail -n ${MAX_DISPLAY_LINES} /sdcard/Clash内核日志.txt 2>/dev/null || echo ''`
-                        : `cat /sdcard/Clash内核日志.txt 2>/dev/null || echo ''`
-                    
-                    const res = await runShellWithRoot(`timeout 3s ${cmd}`)
+                    // 优化：原来 stat + tail/cat 是两次 root shell，现在合并为一条命令，进程开销减半
+                    const res = await runShellWithRoot(
+`SIZE=$(stat -c%s ${LOG_PATH} 2>/dev/null || echo 0)
+echo "###SIZE=\${SIZE}"
+if [ "\${SIZE}" -gt 50000 ]; then
+    tail -n ${MAX_DISPLAY_LINES} ${LOG_PATH} 2>/dev/null
+else
+    cat ${LOG_PATH} 2>/dev/null
+fi`)
                     
                     if (res.success && res.content !== undefined) {
-                        const lines = res.content.split('\n')
+                        const raw = res.content || ''
+                        const m = raw.match(/^###SIZE=(\d+)/m)
+                        const currentSize = m ? parseInt(m[1]) : 0
+                        
+                        // 文件无变化则跳过，不读不更新
+                        if (!flag && currentSize === lastFileSize) {
+                            return
+                        }
+                        lastFileSize = currentSize
+                        
+                        const content = raw.replace(/^###SIZE=\d+\n?/, '')
+                        const lines = content.split('\n')
                         const displayLines = lines.length > MAX_DISPLAY_LINES 
                             ? lines.slice(-MAX_DISPLAY_LINES) 
                             : lines
                         
-                        // 优化3：只有行数变化或强制刷新时才更新 DOM
+                        // 只有行数变化或手动刷新时才更新 DOM
                         if (flag || displayLines.length !== lastLineCount) {
                             lastLineCount = displayLines.length
-                            // 使用 DocumentFragment 或 textContent 减少重排
-                            const html = displayLines.join('<br>')
-                            msg_el.innerHTML = html
-                            
-                            // 自动滚动到底部（仅在新增内容时）
+                            msg_el.innerHTML = displayLines.join('<br>')
                             if (flag) {
                                 msg_el.scrollTop = msg_el.scrollHeight
                             }
@@ -200,7 +201,7 @@
 
             if (clearBtn) {
                 clearBtn.onclick = async () => {
-                    const res = await runShellWithRoot(`echo "" > /sdcard/Clash内核日志.txt`)
+                    const res = await runShellWithRoot(`echo "" > ${LOG_PATH}`)
                     if (res.success) {
                         lastLineCount = 0
                         lastFileSize = 0
@@ -218,8 +219,8 @@
                 }
             }
 
-            // 优化4：降低轮询频率到 3 秒，减少系统负担
-            timer = setInterval(async () => { await refresh() }, 3000)
+            // 优化：轮询间隔 3s → 5s，且 document.hidden 时自动跳过
+            timer = setInterval(async () => { await refresh() }, 5000)
             
             // 初始加载
             refresh(true)
@@ -230,7 +231,7 @@
             close()
         }
     }
-    // ========== 修复结束 ==========
+    // ========== 日志优化结束 ==========
 
     // ========== 自定义规则核心（独立文件 + 标记块注入，解决订阅覆盖） ==========
     const PATHS = {
@@ -242,7 +243,7 @@
         geoDir: '/data/clash/Proxy/'
     };
 
-    // ========== 修改：支持选择 Loyalsoldier 或 MetaCubeX GEO 数据库 ==========
+    // ========== 支持选择 Loyalsoldier 或 MetaCubeX GEO 数据库 ==========
     const updateGeo = async () => {
         // 弹出选择对话框
         const source = await new Promise((resolve) => {
@@ -494,32 +495,27 @@ awk '{print}' ${PATHS.renderRules}
             }
 
             let log = ''
-            const max_times = 600
+            // 优化3：合并原来的 interval + while 双重轮询为单循环，间隔 1s → 2s
+            const max_times = 300  // 300 次 × 2s ≈ 10 分钟超时（与原来一致）
             let count_times = 0
             const { el, close } = createFixedToast("kano_mihomo_toast", `<pre style="white-space: pre-wrap;min-width:300px;text-align: center;">等待日志中...</pre>`, '')
 
-            const interval = setInterval(async () => {
-                const dlog = await runShellWithRoot("timeout 2s  awk '{print}' /data/kano_mihomo_latest.dlog")
-                const lines = dlog.content.split('\n');
+            while (true) {
+                if (max_times <= count_times) {
+                    close()
+                    btn_enabled.disabled = false;
+                    return createToast("下载超时，请检查网络连接或稍后重试！", 'red')
+                }
+                const dlog = await runShellWithRoot("timeout 2s awk '{print}' /data/kano_mihomo_latest.dlog")
+                const lines = (dlog.content || '').split('\n');
                 log = lines.slice(-6).join('\n');
                 el.innerHTML = `<pre style="white-space: pre-wrap;min-width:300px;text-align: center;">${log.replaceAll('\n', "<br>")}</pre>`
                 if (log.includes('DOWNLOAD_DONE')) {
                     setTimeout(() => { close() }, 2000);
-                }
-            }, 1000)
-
-            while (true) {
-                if (max_times <= count_times) {
-                    clearInterval(interval)
-                    btn_enabled.disabled = false;
-                    return createToast("下载超时，请检查网络连接或稍后重试！", 'red')
-                }
-                if (log.includes('DOWNLOAD_DONE')) {
-                    clearInterval(interval)
                     break
                 }
                 count_times++
-                await new Promise(resolve => setTimeout(resolve, 1000))
+                await new Promise(resolve => setTimeout(resolve, 2000))
             }
 
             await runShellWithRoot("rm -f /data/kano_mihomo_latest.dlog")
@@ -616,7 +612,7 @@ grep -qxF 'inotifyd /data/clash/Scripts/Clash.Inotify "/data/clash/Clash" >> /de
         await isMMRunning()
     }
 
-    // ========== 修复：重启按钮（先 stop → start 拉订阅 → 等待 → 重新注入规则） ==========
+    // ========== 重启按钮（先 stop → start 拉订阅 → 等待 → 重新注入规则） ==========
     const btn_restart = document.createElement('button')
     btn_restart.textContent = "重启"
     btn_restart.onclick = async () => {
@@ -652,7 +648,7 @@ grep -qxF 'inotifyd /data/clash/Scripts/Clash.Inotify "/data/clash/Clash" >> /de
         </div>`, 'green')
         await isMMRunning()
     }
-    // ========== 修复结束 ==========
+    // ========== 重启结束 ==========
 
     const uploadEl = document.createElement('input')
     uploadEl.type = 'file'
@@ -750,7 +746,7 @@ grep -qxF 'inotifyd /data/clash/Scripts/Clash.Inotify "/data/clash/Clash" >> /de
         uploadEl.click()
     }
 
-    // ========== 自定义规则按钮（参考别人代码架构重写） ==========
+    // ========== 自定义规则按钮 ==========
     const customRulesBtn = document.createElement('button')
     customRulesBtn.classList.add('btn')
     customRulesBtn.textContent = "自定义规则"
@@ -1068,8 +1064,9 @@ DOMAIN-KEYWORD,youtube" style="width:100%;height:110px;padding:6px;border-radius
             }, sec);
         })
         const mmContainer = document.querySelector('.functions-container')
+        // 优化4：等待间隔 100ms → 500ms，减少无效轮询唤醒
         while (!UFI_DATA.lan_ipaddr) {
-            await wait()
+            await wait(500)
         }
 
         mmContainer.insertAdjacentHTML("afterend", `
@@ -1260,12 +1257,13 @@ DOMAIN-KEYWORD,youtube" style="width:100%;height:110px;padding:6px;border-radius
         const showLogBtn = document.createElement('button')
         showLogBtn.textContent = "查看日志"
         showLogBtn.onclick = async () => {
-            if (!checkAdvanceFunc()) {
-                return createToast("没有开启高级功能，无法使用！")
+            // 修复5：原来漏了 await，root 检查形同虚设
+            if (!(await checkAdvanceFunc())) {
+                return createToast("没有开启高级功能，无法使用！", 'red')
             }
 
             const res = await runShellWithRoot(`
-        timeout 2s awk \'{print}\' /sdcard/Clash内核日志.txt
+        timeout 2s awk '{print}' /sdcard/Clash内核日志.txt
         `)
             if (!res.success) return createToast("获取日志失败！", 'red')
             if (!res.content) return createToast("日志内容为空！", 'red')
