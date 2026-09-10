@@ -1,0 +1,863 @@
+//<script>
+(async () => {
+  const MODAL_NAME = 'windyday_apatch_manager_modal';
+  const STYLE_ID = 'windyday_apatch_manager_style';
+  const WORK_DIR = '/data/local/tmp/windyday_apatch_manager';
+  const MODULES_DIR = '/data/adb/modules';
+  const MODULES_UPDATE_DIR = '/data/adb/modules_update';
+  const APATCH_DIR = '/data/adb/ap';
+  const APATCH_PKGS = ['me.bmax.apatch', 'com.bmax121.apatch'];
+
+  const state = {
+    busy: false,
+    apatch: { managerInstalled: false, managerPackage: '', managerVersionName: '-', managerVersionCode: '-', envActive: false, bin: '', versionCode: '-', kpVersion: '-', workDirReady: false },
+    modules: [],
+    updates: {},
+  };
+  // 网页工具的 root 通道 PATH 里没有 apd，必须用绝对路径
+  let APD_BIN = '/data/adb/apd';
+
+  const wait = (ms = 120) => new Promise((resolve) => setTimeout(resolve, ms));
+  const sq = (value) => `'${String(value || '').replace(/'/g, `'\\''`)}'`;
+  const esc = (text) =>
+    String(text || '')
+      .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+  const clean = (text) =>
+    String(text || '')
+      .replace(/[\r\u2000-\u200F\u202A-\u202E\u2060\uFEFF]/g, '')
+      .trim();
+  const run = async (command, timeout = 30000) => {
+    const res = await runShellWithRoot(command, timeout);
+    return { ok: Boolean(res?.success), text: String(res?.content || '').trim(), raw: res };
+  };
+  const isTrue = (v) => v === true || v === 'true' || v === 1 || v === '1';
+
+  const ensureStyle = () => {
+    if (document.getElementById(STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent = `
+      #${MODAL_NAME} .mm-wrap { display: flex; flex-direction: column; gap: 14px; }
+      #${MODAL_NAME} .mm-card, #${MODAL_NAME} .mm-hero, #${MODAL_NAME} .mm-module {
+        border-radius: 16px; border: 1px solid rgba(255,255,255,.08);
+        background: rgba(255,255,255,.04); padding: 14px;
+      }
+      #${MODAL_NAME} .mm-hero { position: relative; overflow: hidden; }
+      #${MODAL_NAME} .mm-hero::after {
+        content: ''; position: absolute; right: -20px; bottom: -38px;
+        width: 130px; height: 130px; border-radius: 999px;
+        background: radial-gradient(circle, rgba(120,165,255,.22), transparent 68%);
+      }
+      #${MODAL_NAME} .mm-sub { font-size: .68rem; line-height: 1.75; opacity: .86; }
+      #${MODAL_NAME} .mm-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+      #${MODAL_NAME} .mm-stat-label { font-size: .62rem; opacity: .66; margin-bottom: 5px; }
+      #${MODAL_NAME} .mm-stat-value { font-size: .84rem; font-weight: 800; word-break: break-word; }
+      #${MODAL_NAME} .mm-row { display: flex; flex-wrap: wrap; flex-shrink: 0; gap: 10px; align-items: center; }
+      #${MODAL_NAME} .mm-row button { min-width: 110px; }
+      #${MODAL_NAME} .mm-chip {
+        display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px;
+        border-radius: 999px; font-size: .62rem; font-weight: 700; background: rgba(255,255,255,.08);
+      }
+      #${MODAL_NAME} .mm-ok { color: #95ffb2; background: rgba(89,212,130,.16); }
+      #${MODAL_NAME} .mm-warn { color: #ffc299; background: rgba(255,144,84,.16); }
+      #${MODAL_NAME} .mm-bad { color: #ffb0b0; background: rgba(255,80,80,.16); }
+      #${MODAL_NAME} .mm-section-title {
+        display: flex; justify-content: space-between; align-items: center;
+        gap: 10px; margin-bottom: 10px; font-size: .78rem; font-weight: 800;
+      }
+      #${MODAL_NAME} .mm-kv {
+        display: grid; grid-template-columns: 110px minmax(0, 1fr);
+        gap: 6px 10px; font-size: .67rem; line-height: 1.65;
+      }
+      #${MODAL_NAME} .mm-kv .k { opacity: .68; }
+      #${MODAL_NAME} .mm-kv .v { word-break: break-all; }
+      #${MODAL_NAME} .mm-modules { display: flex; flex-direction: column; gap: 10px; }
+      #${MODAL_NAME} .mm-module-head {
+        display: flex; justify-content: space-between; gap: 10px;
+        align-items: flex-start; margin-bottom: 8px;
+      }
+      #${MODAL_NAME} .mm-module-title { font-size: .8rem; font-weight: 800; word-break: break-word; }
+      #${MODAL_NAME} .mm-module-desc { font-size: .66rem; line-height: 1.7; opacity: .82; margin-top: 6px; word-break: break-word; }
+      #${MODAL_NAME} .mm-module-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+      #${MODAL_NAME} .mm-empty { font-size: .68rem; line-height: 1.7; opacity: .78; }
+      @media (max-width: 760px) {
+        #${MODAL_NAME} .mm-grid { grid-template-columns: 1fr 1fr; }
+        #${MODAL_NAME} .mm-kv { grid-template-columns: 1fr; }
+      }
+    `;
+    document.head.appendChild(style);
+  };
+
+  const parseKeyValue = (text) => {
+    const out = {};
+    String(text || '').split('\n').forEach((line) => {
+      const idx = line.indexOf('=');
+      if (idx < 0) return;
+      out[line.slice(0, idx).trim()] = clean(line.slice(idx + 1));
+    });
+    return out;
+  };
+
+  const getInstalledApatchApp = async () => {
+    const res = await run(`
+pkg=""
+for p in ${APATCH_PKGS.map(sq).join(' ')}; do
+  if pm list packages 2>/dev/null | grep -q "package:$p"; then pkg="$p"; break; fi
+  if [ -n "$(pm path "$p" 2>/dev/null)" ]; then pkg="$p"; break; fi
+  if [ -d "/data/data/$p" ]; then pkg="$p"; break; fi
+done
+if [ -z "$pkg" ]; then
+  echo "installed=0"
+  exit 0
+fi
+dump="$(dumpsys package "$pkg" 2>/dev/null)"
+vc="$(printf '%s\\n' "$dump" | awk -F= '/versionCode=/{print $2; exit}' | awk '{print $1}')"
+vn="$(printf '%s\\n' "$dump" | awk -F= '/versionName=/{print $2; exit}')"
+echo "installed=1"
+echo "package=$pkg"
+echo "versionCode=$vc"
+echo "versionName=$(printf '%s' "$vn" | tr -d '\\r')"
+`, 20000);
+    const data = parseKeyValue(res.text);
+    return {
+      installed: data.installed === '1',
+      packageName: data.package || '',
+      versionCode: parseInt(data.versionCode || '-1', 10) || -1,
+      versionName: data.versionName || '-',
+    };
+  };
+
+  const fetchApatchState = async () => {
+    const app = await getInstalledApatchApp();
+    // 官方版 versionName 就是 KP 版本，无需提取 kpimg；自编译版才走 kpimg 查询
+    const needKpimg = !/^\d+\.\d+\.\d+/.test(String(app.versionName || '').trim());
+    const kpimgBlock = needKpimg ? `
+kpimgVersion=""
+CUR=${sq(String(app.versionCode > 0 ? app.versionCode : '0'))}
+MARK=${sq(`${WORK_DIR}/kpimg.vc`)}
+KT=${sq(`${WORK_DIR}/kptools`)}
+KI=${sq(`${WORK_DIR}/kpimg`)}
+if [ -x "$KT" ] && [ -s "$KI" ] && [ -f "$MARK" ] && [ "$(cat "$MARK" 2>/dev/null)" = "$CUR" ]; then
+  kpimgVersion="$("$KT" -l -k "$KI" 2>/dev/null | grep '^version=' | head -n1)"
+else
+  APK=""
+  for p in me.bmax.apatch com.bmax121.apatch; do
+    APK="$(pm path $p 2>/dev/null | head -n1 | cut -d: -f2)"
+    [ -n "$APK" ] && break
+  done
+  if [ -n "$APK" ]; then
+    rm -f "$KI" "$MARK"
+    SRC=$(find /data/app -path '*bmax.apatch*' -name 'libkptools.so' 2>/dev/null | head -n1)
+    [ -n "$SRC" ] && cp -f "$SRC" "$KT" && chmod 755 "$KT"
+    mkdir -p ${sq(`${WORK_DIR}/kp_extract`)}
+    if command -v unzip >/dev/null 2>&1; then
+      unzip -o "$APK" 'assets/kpimg' -d ${sq(`${WORK_DIR}/kp_extract`)} >/dev/null 2>&1
+      mv ${sq(`${WORK_DIR}/kp_extract/assets/kpimg`)} "$KI" 2>/dev/null
+    else
+      BZ=$(find /data/app -path '*bmax.apatch*' -name 'libbusybox.so' 2>/dev/null | head -n1)
+      [ -n "$BZ" ] && chmod 755 "$BZ" 2>/dev/null && "$BZ" unzip -o "$APK" 'assets/kpimg' -d ${sq(`${WORK_DIR}/kp_extract`)} >/dev/null 2>&1
+      mv ${sq(`${WORK_DIR}/kp_extract/assets/kpimg`)} "$KI" 2>/dev/null
+    fi
+    if [ -x "$KT" ] && [ -s "$KI" ]; then
+      kpimgVersion="$("$KT" -l -k "$KI" 2>/dev/null | grep '^version=' | head -n1)"
+      echo "$CUR" > "$MARK"
+    fi
+  fi
+fi
+echo "kpimgVersion=$kpimgVersion"
+` : 'echo "kpimgVersion="';
+    const infoRes = await run(`
+APD_BIN=""
+[ -x /data/adb/apd ] && APD_BIN=/data/adb/apd
+[ -z "$APD_BIN" ] && [ -x /data/adb/ap/bin/apd ] && APD_BIN=/data/adb/ap/bin/apd
+[ -z "$APD_BIN" ] && APD_BIN="$(command -v apd 2>/dev/null)"
+if [ -n "$APD_BIN" ] && ! "$APD_BIN" -V >/dev/null 2>&1; then
+  cp -f /data/adb/apd ${sq(`${WORK_DIR}/apd`)} 2>/dev/null
+  chmod 755 ${sq(`${WORK_DIR}/apd`)} 2>/dev/null
+  if ${sq(`${WORK_DIR}/apd`)} -V >/dev/null 2>&1; then APD_BIN=${sq(`${WORK_DIR}/apd`)}; fi
+fi
+echo "installed=$([ -n "$APD_BIN" ] && echo 1 || echo 0)"
+echo "bin=$APD_BIN"
+if [ -n "$APD_BIN" ]; then
+  versionCode="$("$APD_BIN" -V 2>/dev/null | tr -d '\\r' | grep -o '[0-9][0-9]*' | tail -n 1)"
+  echo "versionCode=$versionCode"
+fi
+echo "workDirReady=$([ -d ${sq(APATCH_DIR)} ] && echo 1 || echo 0)"
+echo "apdVersionFile=$(cat ${sq(APATCH_DIR)}/version 2>/dev/null | tr -d '\\r\\n')"
+${kpimgBlock}
+`, 30000);
+    const data = parseKeyValue(infoRes.text);
+    const apdFound = data.installed === '1';
+    APD_BIN = data.bin || APD_BIN;
+    // kpimg version=0xd03 → 按 KP 编码 (主<<16|次<<8|修订) 解码为 0.13.3
+    const m = /version=0x([0-9a-fA-F]+)/.exec(data.kpimgVersion || '');
+    let kpFromKpimg = '';
+    if (m) {
+      const c = parseInt(m[1], 16);
+      if (Number.isFinite(c) && c > 0) {
+        kpFromKpimg = `${(c >> 16) & 0xff}.${(c >> 8) & 0xff}.${c & 0xff}`;
+      }
+    }
+    const rawVer = String(app.versionName || '').trim();
+    let kpVersion;
+    if (/^\d+\.\d+\.\d+/.test(rawVer)) {
+      kpVersion = rawVer.match(/^\d+\.\d+\.\d+/)[0];
+    } else if (kpFromKpimg) {
+      kpVersion = kpFromKpimg;
+    } else {
+      kpVersion = rawVer && rawVer !== '-' ? `dev (${rawVer})` : '-';
+    }
+    state.apatch = {
+      managerInstalled: app.installed,
+      managerPackage: app.packageName || '',
+      managerVersionName: app.versionName || '-',
+      managerVersionCode: app.versionCode > 0 ? String(app.versionCode) : '-',
+      envActive: apdFound || data.workDirReady === '1',
+      bin: data.bin || '',
+      versionCode: data.versionCode || data.apdVersionFile || '-',
+      kpVersion,
+      workDirReady: data.workDirReady === '1',
+    };
+  };
+
+  // 模块状态以 `apd module list` JSON 为权威来源（只含已激活模块），
+  // 合并文件扫描：modules_update 里的新装模块标记为“待重启生效”
+  const fetchModules = async () => {
+    const listRes = await run(`${APD_BIN} module list 2>/dev/null`, 60000);
+    let jsonModules = [];
+    if (listRes.ok && listRes.text.includes('[')) {
+      try {
+        const start = listRes.text.indexOf('[');
+        const end = listRes.text.lastIndexOf(']');
+        jsonModules = JSON.parse(listRes.text.slice(start, end + 1));
+      } catch (error) {
+        console.error('apd module list 解析失败', error);
+      }
+    }
+
+    const fileRes = await run(`
+for base in ${sq(MODULES_DIR)} ${sq(MODULES_UPDATE_DIR)}; do
+  [ -d "$base" ] || continue
+  src="modules"
+  [ "$base" = ${sq(MODULES_UPDATE_DIR)} ] && src="modules_update"
+  for dir in "$base"/*; do
+    [ -d "$dir" ] || continue
+    [ -f "$dir/module.prop" ] || continue
+    id="$(timeout 2s awk -F= -v K=id '$1==K{print substr($0,index($0,"=")+1); exit}' "$dir/module.prop" 2>/dev/null | tr -d '\\r\\t\\n')"
+    [ -z "$id" ] && id="$(basename "$dir")"
+    printf '%s\\t%s\\t%s\\t%s\\n' "$id" "$dir" "$src" "$([ -f "$dir/zygisk/unloaded" ] && echo 1 || echo 0)"
+  done
+done
+`, 30000);
+
+    const fileInfo = new Map();
+    if (fileRes.ok) {
+      String(fileRes.text || '')
+        .split('\n')
+        .map((line) => line.trim().split('\t'))
+        .filter((parts) => parts.length === 4 && /^\/data\/adb\/modules(?:_update)?\//.test(clean(parts[1])))
+        .forEach((parts) => {
+          fileInfo.set(clean(parts[0]), {
+            dir: clean(parts[1]),
+            source: clean(parts[2]) || 'modules',
+            unloaded: parts[3] === '1',
+          });
+        });
+    }
+
+    const modules = [];
+    const seen = new Set();
+    for (const item of Array.isArray(jsonModules) ? jsonModules : []) {
+      const id = clean(item?.id);
+      if (!id) continue;
+      const file = fileInfo.get(id) || {};
+      modules.push({
+        id,
+        name: clean(item?.name) || id,
+        version: clean(item?.version) || '-',
+        versionCode: clean(item?.versionCode) || '-',
+        author: clean(item?.author) || '-',
+        description: clean(item?.description) || '-',
+        enabled: isTrue(item?.enabled),
+        remove: isTrue(item?.remove),
+        update: isTrue(item?.update),
+        updateJson: clean(item?.updateJson) || '',
+        dir: file.dir || `${MODULES_DIR}/${id}`,
+        source: file.source || 'modules',
+        unloaded: Boolean(file.unloaded),
+        pendingReboot: file.source === 'modules_update',
+      });
+      seen.add(id);
+    }
+    for (const [id, file] of fileInfo.entries()) {
+      if (seen.has(id)) continue;
+      const dir = file.dir || `${MODULES_DIR}/${id}`;
+      const propRes = await run(`
+p() { timeout 2s awk -F= -v K="$1" '$1==K{print substr($0,index($0,"=")+1); exit}' "${dir}/module.prop" 2>/dev/null | tr -d '\\r'; }
+echo "name=$(p name)"
+echo "version=$(p version)"
+echo "author=$(p author)"
+echo "description=$(p description)"
+echo "enabled=$([ -f "${dir}/disable" ] && echo 0 || echo 1)"
+echo "remove=$([ -f "${dir}/remove" ] && echo 1 || echo 0)"
+echo "update=$([ -f "${dir}/update" ] && echo 1 || echo 0)"
+echo "updateJson=$(p updateJson)"
+`, 20000);
+      const d = parseKeyValue(propRes.text);
+      modules.push({
+        id,
+        name: d.name || id,
+        version: d.version || '-',
+        versionCode: '-',
+        author: d.author || '-',
+        description: d.description || '-',
+        enabled: d.enabled !== '0',
+        remove: d.remove === '1',
+        update: d.update === '1',
+        updateJson: d.updateJson || '',
+        dir,
+        source: file.source || 'modules',
+        unloaded: Boolean(file.unloaded),
+        pendingReboot: file.source === 'modules_update' || d.update === '1',
+      });
+    }
+
+    state.modules = modules.sort((a, b) => {
+      if (a.pendingReboot !== b.pendingReboot) return a.pendingReboot ? -1 : 1;
+      return a.name.localeCompare(b.name, 'zh-CN');
+    });
+  };
+
+  const refreshAll = async (toast = false) => {
+    state.busy = true;
+    render();
+    await fetchApatchState();
+    await fetchModules();
+    state.busy = false;
+    render();
+    if (toast) createToast('APatch 状态已刷新', 'pink');
+    if (!state.apatch.managerInstalled) {
+      createToast('未检测到 APatch 管理器安装信息；环境功能不受影响。', 'pink', 4000);
+    }
+    if (!state.apatch.envActive) {
+      createToast('未检测到 apd 或 /data/adb/ap；请确认已通过管理器修补并刷入 boot（KernelPatch）。', 'pink', 5000);
+    }
+  };
+
+  const uploadFileToDevice = async (file, destPath, chmod = '644') => {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const uploadRes = await (await fetch(`${KANO_baseURL}/upload_img`, {
+        method: 'POST',
+        headers: common_headers,
+        body: formData,
+      })).json();
+      if (!uploadRes?.url) {
+        return { ok: false, message: uploadRes?.error || '上传失败' };
+      }
+      const tempPath = `/data/data/com.minikano.f50_sms/files${uploadRes.url}`;
+      const moveRes = await run(`
+mkdir -p ${sq(WORK_DIR)}
+mkdir -p ${sq(destPath.replace(/\/[^/]+$/, ''))}
+mv ${sq(tempPath)} ${sq(destPath)}
+chmod ${chmod} ${sq(destPath)}
+ls -l ${sq(destPath)}
+`, 20000);
+      return moveRes.ok
+        ? { ok: true, path: destPath }
+        : { ok: false, message: moveRes.text || '移动文件失败' };
+    } catch (error) {
+      console.error(error);
+      return { ok: false, message: String(error || '上传异常') };
+    }
+  };
+
+  const toggleModuleEnabled = async (module) => {
+    const cmd = module.enabled ? 'disable' : 'enable';
+    const res = await run(`${APD_BIN} module ${cmd} ${sq(module.id)} 2>&1; echo "exit=$?"`, 30000);
+    const exitOk = res.text.includes('exit=0');
+    return { ok: exitOk, message: exitOk ? '模块状态已更新，需要重启设备后生效' : (res.text || '操作失败') };
+  };
+
+  const toggleModuleRemove = async (module) => {
+    const cmd = module.remove ? 'undo-uninstall' : 'uninstall';
+    const res = await run(`${APD_BIN} module ${cmd} ${sq(module.id)} 2>&1; echo "exit=$?"`, 30000);
+    const exitOk = res.text.includes('exit=0');
+    return { ok: exitOk, message: exitOk ? '卸载标记已更新，需要重启设备后执行' : (res.text || '操作失败') };
+  };
+
+  const installModuleZip = async (file, preUploadedPath = '') => {
+    let target = preUploadedPath;
+    if (!target) {
+      const safeName = String(file?.name || 'module.zip').replace(/[^\w.\-]+/g, '_') || 'module.zip';
+      target = `${WORK_DIR}/${safeName}`;
+      const uploaded = await uploadFileToDevice(file, target);
+      if (!uploaded.ok) return uploaded;
+    }
+    const installRes = await run(`${APD_BIN} module install ${sq(target)} 2>&1; echo "exit=$?"`, 300000);
+    await run(`rm -f ${sq(target)}`, 10000);
+
+    const log = installRes.text || '(空)';
+    const exitOk = log.includes('exit=0');
+    const check = await run(`
+ids=""
+for d in ${sq(MODULES_UPDATE_DIR)}/*/module.prop; do
+  [ -f "$d" ] || continue
+  i="$(timeout 2s awk -F= -v K=id '$1==K{print substr($0,index($0,"=")+1); exit}' "$d" 2>/dev/null | tr -d '\\r\\t\\n')"
+  [ -n "$i" ] && ids="$ids $i"
+done
+echo "pending_ids=$ids"
+`, 15000);
+    const pendingIds = (parseKeyValue(check.text).pending_ids || '')
+      .split(/\s+/).filter(Boolean);
+    // 判定优先级：modules_update 里真实出现 > exit=0 > 日志含“安装完成”
+    // （apd 末尾偶发 "No child processes (os error 10)"，模块其实已装好）
+    const logOk = /安装完成|Installation complete/i.test(log);
+    if (pendingIds.length) {
+      return {
+        ok: true,
+        message: `安装成功：${pendingIds.join('、')} 已进入待重启列表（重启后生效并显示在模块列表）`,
+        log,
+      };
+    }
+    if (exitOk || logOk) {
+      return {
+        ok: true,
+        message: '安装命令执行成功（若列表未变化，请重启设备后刷新确认）',
+        log,
+      };
+    }
+    const lines = log.trim().split('\n');
+    const tail = lines.slice(-3).join(' | ');
+    return { ok: false, message: `模块安装失败：${tail || '无输出'}`, log };
+  };
+
+  // --- 模块更新检查（基于 module.prop 的 updateJson）---
+  // 浏览器 fetch 失败（跨域/网络）时自动回落到设备端 curl/wget 下载
+  const fetchJsonViaDevice = async (url) => {
+    const res = await run(`
+u=${sq(url)}
+if command -v curl >/dev/null 2>&1; then
+  curl -sL --max-time 25 "$u"
+elif command -v wget >/dev/null 2>&1; then
+  wget -qO- -T 25 "$u"
+else
+  exit 9
+fi
+`, 40000);
+    if (!res.ok || !res.text) return null;
+    try {
+      return JSON.parse(res.text);
+    } catch (error) {
+      return null;
+    }
+  };
+
+  const fetchJsonForUpdate = async (url) => {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 15000);
+      const res = await fetch(url, { cache: 'no-store', signal: ctrl.signal });
+      clearTimeout(timer);
+      if (res.ok) {
+        const info = await res.json();
+        if (info && typeof info === 'object') return info;
+      }
+    } catch (error) {
+      // 浏览器侧失败，走设备端
+    }
+    return fetchJsonViaDevice(url);
+  };
+
+  const checkModuleUpdates = async () => {
+    const targets = state.modules.filter((m) => m.updateJson);
+    if (!targets.length) {
+      createToast('没有模块提供 updateJson，无法检查更新', 'pink', 5000);
+      return;
+    }
+    state.busy = true;
+    render();
+    let found = 0;
+    let failed = 0;
+    const failList = [];
+    for (const m of targets) {
+      const info = await fetchJsonForUpdate(m.updateJson);
+      if (!info) {
+        failed++;
+        failList.push(m.name);
+        continue;
+      }
+      const remoteCode = parseInt(info.versionCode, 10) || 0;
+      const localCode = parseInt(m.versionCode, 10) || 0;
+      if ((remoteCode > 0 && remoteCode > localCode)
+        || (!remoteCode && info.version && info.version !== m.version)) {
+        state.updates[m.id] = {
+          version: info.version || '-',
+          versionCode: remoteCode,
+          zipUrl: info.zipUrl || '',
+          changelog: info.changelog || '',
+        };
+        found++;
+      } else {
+        delete state.updates[m.id];
+      }
+    }
+    state.busy = false;
+    render();
+    let msg = `检查完成：可更新 ${found} 个`;
+    if (failed) msg += `，无法检查 ${failed} 个（${failList.join('、')}）`;
+    createToast(msg, failed && !found ? 'red' : 'pink', 6000);
+  };
+
+  // 更新包下载：优先浏览器（快），失败回落设备端 curl/wget
+  const fetchBlobForUpdate = async (url) => {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 300000);
+      const res = await fetch(url, { cache: 'no-store', signal: ctrl.signal });
+      clearTimeout(timer);
+      if (res.ok) return { blob: await res.blob() };
+    } catch (error) {
+      // 回落设备端
+    }
+    const res = await run(`
+u=${sq(url)}
+out=${sq(`${WORK_DIR}/update_download.bin`)}
+mkdir -p ${sq(WORK_DIR)}
+if command -v curl >/dev/null 2>&1; then
+  curl -sL --max-time 600 -o "$out" "$u"
+elif command -v wget >/dev/null 2>&1; then
+  wget -qO "$out" -T 600 "$u"
+else
+  exit 9
+fi
+[ -s "$out" ] || exit 1
+echo "dev=1"
+`, 600000);
+    if (res.ok && res.text.includes('dev=1')) {
+      // 设备端已下载好，直接用设备上的文件安装，不做二次上传
+      return { devicePath: `${WORK_DIR}/update_download.bin` };
+    }
+    return null;
+  };
+
+  const updateModule = async (module) => {
+    const info = state.updates[module.id];
+    if (!info?.zipUrl) return { ok: false, message: '没有可用的更新信息' };
+    state.busy = true;
+    render();
+    try {
+      createToast(`正在下载 ${module.name} ${info.version}…`, 'pink', 4000);
+      const got = await fetchBlobForUpdate(info.zipUrl);
+      if (!got) throw new Error('下载失败（浏览器与设备端均失败）');
+      let result;
+      if (got.devicePath) {
+        result = await installModuleZip(null, got.devicePath);
+      } else {
+        const file = new File([got.blob], `${module.id}-${info.version}.zip`, { type: 'application/zip' });
+        result = await installModuleZip(file);
+      }
+      createToast(result.message, result.ok ? 'pink' : 'red', 6000);
+      await refreshAll();
+    } catch (error) {
+      createToast(`更新失败：${error?.message || error}`, 'red', 6000);
+    } finally {
+      state.busy = false;
+      render();
+    }
+  };
+
+  const askConfirm = (id, title, body, ok = '确认', cancel = '取消') => new Promise((resolve) => {
+    const { el, close } = createFixedToast(
+      id,
+      `<div style="pointer-events:all;width:90vw;max-width:520px;">
+        <div class="title" style="margin:0">${title}</div>
+        <div style="margin-top:10px;font-size:.7rem;line-height:1.75">${body}</div>
+        <div style="margin-top:14px;text-align:right;display:flex;justify-content:flex-end;gap:10px;">
+          <button class="ok">${ok}</button>
+          <button class="cancel">${cancel}</button>
+        </div>
+      </div>`,
+    );
+    const done = (value) => {
+      close();
+      resolve(value);
+    };
+    el.querySelector('.ok')?.addEventListener('click', () => done(true));
+    el.querySelector('.cancel')?.addEventListener('click', () => done(false));
+  });
+
+  const rebootDevice = async () => {
+    const first = await askConfirm(
+      'mm_reboot_confirm_1',
+      '确认重启设备',
+      '设备将立即执行重启。请先确认当前没有正在进行中的操作。',
+      '继续',
+    );
+    if (!first) return { cancelled: true };
+    const second = await askConfirm(
+      'mm_reboot_confirm_2',
+      '再次确认重启',
+      '重启后当前页面会中断，未保存的内容可能丢失。确认现在重启吗？',
+      '立即重启',
+    );
+    if (!second) return { cancelled: true };
+    const res = await run('reboot', 15000);
+    return { ok: res.ok, message: res.ok ? '重启命令已发送' : (res.text || '重启失败') };
+  };
+
+  const clearApatchEnv = async () => {
+    const first = await askConfirm(
+      'mm_clear_env_confirm_1',
+      '确认清除 APatch 环境',
+      '此操作将清除 APatch 工作目录和所有已安装的模块，但不会还原 boot 里的 KernelPatch 补丁。请先确认当前没有正在进行中的操作。',
+      '继续',
+    );
+    if (!first) return { cancelled: true };
+    const second = await askConfirm(
+      'mm_clear_env_confirm_2',
+      '再次确认清除',
+      'APatch 环境和模块将被完全清除（/data/adb/ap、/data/adb/apd、modules、zygisksu 等），重启后 boot 补丁仍在。确认现在清除吗？',
+      '立即清除',
+    );
+    if (!second) return { cancelled: true };
+    const res = await run(`rm -rf ${sq(APATCH_DIR)} /data/adb/apd /data/adb/ap.log /data/adb/modules /data/adb/modules_update /data/adb/post-fs-data.d /data/adb/service.d /data/adb/zygisksu /data/adb/magic_mount ${sq(WORK_DIR)} /data/local/tmp/kano_apd /data/local/tmp/kano_kptools /data/local/tmp/kano_kpimg /data/local/tmp/kano_kp`, 15000);
+    return {
+      ok: res.ok,
+      message: res.ok ? 'APatch 环境已清除，重启生效（boot 补丁不会被还原）' : (res.text || '清除失败'),
+    };
+  };
+
+  const chip = (text, kind) => `<span class="mm-chip ${kind}">${esc(text)}</span>`;
+
+  const renderOverview = () => {
+    const status = !state.apatch.managerInstalled
+      ? chip('未检测到', 'mm-bad')
+      : chip('已安装', 'mm-ok');
+    return `
+      <div class="mm-hero">
+        <div class="mm-sub">
+          可以在这里管理 APatch 模块。新安装的模块会显示“待重启生效”，重启后正式生效。<br/>
+          APatch 基于 KernelPatch，环境由 boot 内核补丁提供。APatch 原生不带 Zygisk，如需 Zygisk 请安装 Zygisk Next（zygisksu）模块。<br/>
+        </div>
+      </div>
+      <div class="mm-grid">
+        <div class="mm-card"><div class="mm-stat-label">APatch.apk</div><div class="mm-stat-value">${status}</div></div>
+        <div class="mm-card"><div class="mm-stat-label">APK 版本</div><div class="mm-stat-value">${esc(state.apatch.managerVersionName)} ${state.apatch.managerVersionCode !== '-' ? `(${esc(state.apatch.managerVersionCode)})` : ''}</div></div>
+        <div class="mm-card"><div class="mm-stat-label">KernelPatch</div><div class="mm-stat-value">${esc(state.apatch.envActive ? state.apatch.kpVersion : '-')} ${state.apatch.envActive && state.apatch.versionCode !== '-' ? `(apd ${esc(state.apatch.versionCode)})` : ''}</div></div>
+        <div class="mm-card"><div class="mm-stat-label">模块数</div><div class="mm-stat-value">${state.modules.length}</div></div>
+      </div>
+            <div class="mm-row" style="margin-top:12px">
+        <button id="mm_refresh_btn"${state.busy ? ' disabled' : ''}>刷新</button>
+        <button id="mm_install_btn"${state.busy || !state.apatch.envActive ? ' disabled' : ''}>选择并安装模块 ZIP</button>
+        <button id="mm_check_update_btn"${state.busy ? ' disabled' : ''}>模块检查更新</button>
+        <button id="mm_reboot_btn"${state.busy ? ' disabled' : ''}>重启设备</button>
+        <button id="mm_clear_env_btn"${state.busy ? ' disabled' : ''}>清除APatch环境与模块</button>
+      </div>
+    `;
+  };
+
+  const renderModules = () => {
+    if (!state.modules.length) {
+      return `
+        <div class="mm-card">
+          <div class="mm-section-title"><span>模块列表</span><span>${chip('0 个', 'mm-warn')}</span></div>
+          <div class="mm-empty">当前没有检测到已安装模块，或者 apd module list 不可用。</div>
+        </div>
+      `;
+    }
+    return `
+      <div class="mm-card">
+        <div class="mm-section-title"><span>模块列表</span><span>${chip(`${state.modules.length} 个`, 'mm-ok')}</span></div>
+        <div class="mm-modules">
+          ${state.modules.map((module) => `
+            <div class="mm-module" data-module-id="${esc(module.id)}">
+              <div class="mm-module-head">
+                <div>
+                  <div class="mm-module-title">${esc(module.name)}</div>
+                  <div class="mm-module-desc">${esc(module.description || '-')}</div>
+                </div>
+                <div class="mm-row">
+                  ${module.pendingReboot ? chip('待重启生效', 'mm-warn') : ''}
+                  ${module.enabled ? chip('已启用', 'mm-ok') : chip('已禁用', 'mm-warn')}
+                  ${module.remove ? chip('待卸载', 'mm-bad') : ''}
+                  ${state.updates[module.id] ? chip(`可更新 ${esc(state.updates[module.id].version)}`, 'mm-warn') : ''}
+                </div>
+              </div>
+              <div class="mm-kv">
+                <div class="k">ID</div><div class="v">${esc(module.id)}</div>
+                <div class="k">版本</div><div class="v">${esc(module.version)} ${module.versionCode !== '-' ? `(${esc(module.versionCode)})` : ''}</div>
+                <div class="k">作者</div><div class="v">${esc(module.author)}</div>
+                <div class="k">目录</div><div class="v">${esc(module.dir)}</div>
+              </div>
+              <div class="mm-module-actions">
+                <button class="mm-toggle-enable" data-id="${esc(module.id)}"${state.busy ? ' disabled' : ''}>${module.enabled ? '禁用' : '启用'}</button>
+                <button class="mm-toggle-remove" data-id="${esc(module.id)}"${state.busy ? ' disabled' : ''}>${module.remove ? '取消卸载' : '标记卸载'}</button>
+                ${state.updates[module.id] ? `<button class="mm-do-update" data-id="${esc(module.id)}"${state.busy ? ' disabled' : ''}>更新到 ${esc(state.updates[module.id].version)}</button>` : ''}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  };
+
+  function render() {
+    const body = document.querySelector(`#${MODAL_NAME} .mm-root`);
+    if (!body) return;
+    body.innerHTML = `
+      <div class="mm-wrap">
+        ${renderOverview()}
+        ${renderModules()}
+      </div>
+    `;
+
+    const refreshBtn = body.querySelector('#mm_refresh_btn');
+    const installBtn = body.querySelector('#mm_install_btn');
+    const checkUpdateBtn = body.querySelector('#mm_check_update_btn');
+    const rebootBtn = body.querySelector('#mm_reboot_btn');
+    const clearEnvBtn = body.querySelector('#mm_clear_env_btn');
+
+    refreshBtn && (refreshBtn.onclick = async () => {
+      await refreshAll(true);
+    });
+
+    rebootBtn && (rebootBtn.onclick = async () => {
+      state.busy = true;
+      render();
+      const result = await rebootDevice();
+      if (!result?.cancelled) {
+        createToast(result.message, result.ok ? 'pink' : 'red', 5000);
+      }
+      state.busy = false;
+      render();
+    });
+
+    clearEnvBtn && (clearEnvBtn.onclick = async () => {
+      state.busy = true;
+      render();
+      const result = await clearApatchEnv();
+      if (!result?.cancelled) {
+        createToast(result.message, result.ok ? 'pink' : 'red', 6000);
+      }
+      state.busy = false;
+      await refreshAll();
+    });
+
+    checkUpdateBtn && (checkUpdateBtn.onclick = async () => {
+      await checkModuleUpdates();
+    });
+
+    installBtn && (installBtn.onclick = async () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.zip,application/zip,application/x-zip-compressed';
+      input.onchange = async (event) => {
+        const target = event.target;
+        if (!target) return;
+        const file = target.files ? target.files[0] : null;
+        if (!file) {
+          createToast('没有选择文件，操作取消！', 'pink');
+          input.files = null;
+          input.value = null;
+          input.remove();
+          return;
+        }
+        try {
+          state.busy = true;
+          render();
+          const { close: cls } = createFixedToast('windyday_upload_zip_loading', '正在上传模块...');
+          const result = await installModuleZip(file);
+          cls();
+          createToast(result.message, result.ok ? 'pink' : 'red', 6000);
+          state.busy = false;
+          await refreshAll();
+        } finally {
+          input.remove();
+        }
+      };
+      input.style.position = 'fixed';
+      input.style.left = '-9999px';
+      input.style.top = '0';
+      input.style.width = '1px';
+      input.style.height = '1px';
+      input.style.opacity = '0.001';
+      document.body.appendChild(input);
+      input.click();
+    });
+
+    body.querySelectorAll('.mm-toggle-enable').forEach((button) => {
+      button.onclick = async () => {
+        const module = state.modules.find((item) => item.id === button.dataset.id);
+        if (!module) return;
+        state.busy = true;
+        render();
+        const result = await toggleModuleEnabled(module);
+        createToast(result.message, result.ok ? 'pink' : 'red', 5000);
+        state.busy = false;
+        await refreshAll();
+      };
+    });
+
+    body.querySelectorAll('.mm-toggle-remove').forEach((button) => {
+      button.onclick = async () => {
+        const module = state.modules.find((item) => item.id === button.dataset.id);
+        if (!module) return;
+        state.busy = true;
+        render();
+        const result = await toggleModuleRemove(module);
+        createToast(result.message, result.ok ? 'pink' : 'red', 5000);
+        state.busy = false;
+        await refreshAll();
+      };
+    });
+
+    body.querySelectorAll('.mm-do-update').forEach((button) => {
+      button.onclick = async () => {
+        const module = state.modules.find((item) => item.id === button.dataset.id);
+        if (!module) return;
+        await updateModule(module);
+      };
+    });
+  }
+
+  const openModal = async () => {
+    document.querySelector(`#${MODAL_NAME}`)?.remove();
+    ensureStyle();
+    const { id } = createModal({
+      name: MODAL_NAME,
+      title: 'APatch管理器',
+      maxWidth: '1040px',
+      isMask: true,
+      showConfirm: false,
+      contentStyle: 'max-height:76vh;',
+      onClose: () => true,
+      content: '<div class="mm-root"></div>',
+    });
+    showModal(id);
+    await refreshAll();
+  };
+
+  const checkRoot = async () => {
+    const who = await run('whoami', 10000);
+    return who.ok && who.text.includes('root');
+  };
+
+  const btn = document.createElement('button');
+  btn.textContent = 'APatch管理器';
+  btn.onclick = async () => {
+    if (!(await checkRoot())) {
+      createToast('请先启用高级功能', 'red');
+      return;
+    }
+    await openModal();
+  };
+
+  while (!document.querySelector('.actions-buttons')) {
+    await wait(150);
+  }
+  document.querySelector('.actions-buttons')?.appendChild(btn);
+})();
+//</script>
