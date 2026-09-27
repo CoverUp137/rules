@@ -19,7 +19,7 @@
 
 ```
 # 1. linux简易管理菜单
-bash <(curl -sSL https://gh.0507.dpdns.org/https://raw.githubusercontent.com/CoverUp137/rules/refs/heads/main/menu.sh)
+bash -c "$(curl -sSL https://gh.0507.dpdns.org/https://raw.githubusercontent.com/CoverUp137/rules/refs/heads/main/menu.sh)"
 
 # 2. 更新 Nikki GeoData 数据库
 bash <(curl -sSL https://gh.0507.dpdns.org/https://raw.githubusercontent.com/CoverUp137/rules/refs/heads/main/nikki-geodata.sh)
