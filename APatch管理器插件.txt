@@ -1,0 +1,934 @@
+//<script>
+/**
+ * UFI-TOOLS 插件：APatch 管理器
+ * ---------------------------------------------------------------------------
+ * 功能：
+ *   1. 显示 APatch 版本号 / KernelPatch 版本号 / 内核版本 / KernelPatch 构建时间
+ *   2. 显示 APatch(APM) 模块列表与模块数量，模块可 启用/禁用、卸载(可撤销)、Action、在线更新
+ *   3. 自定义上传模块 zip 安装（另附 zip 直链在线安装）
+ *
+ * 实现要点：
+ *   - 模块操作全部走 APatch 官方守护进程 /data/adb/apd（apd module list/install/uninstall/
+ *     enable/disable/undo-uninstall/action），不手改 /data/adb/modules 下文件，语义与管理器一致
+ *   - KernelPatch 版本通过 KernelPatch 超级命令 `truncate su version`（root 默认在 su 白名单里，
+ *     输出 "内核版本hex,KP版本hex"）；读不到时回退 dmesg，再不行可手填 SuperKey
+ *   - 模块在线更新读取 module.prop 的 updateJson（Magisk/KernelSU 同一规范）
+ *   - install / uninstall 都是 systemless 语义：写入 modules_update，重启后由 apd 合并生效
+ *   - 安装结果不靠 apd 的 stdout 判断（错误全在 stderr）：命令带 2>&1，再核对 modules_update 是否真的多了模块目录
+ *   - 内置「插件操作日志」面板：插件执行过的每条 root 命令+输出（自动持久化），可一键复制
+ * ---------------------------------------------------------------------------
+ */
+(async () => {
+    /* ================================ 常量 ================================ */
+    const APD = '/data/adb/apd';
+    const MODULE_DIR = '/data/adb/modules';
+    const MODULE_UPDATE_DIR = '/data/adb/modules_update';
+    const TMP_DIR = '/data/local/tmp';
+    const CURL_BIN = '/data/data/com.minikano.f50_sms/files/curl';
+    const BUSYBOX = '/data/adb/ap/bin/busybox';
+    const DOC_ID = 'apatch_manager_modal';
+    const LS_SUPERKEY = 'apatch_mgr_superkey';
+    const LS_UPD_CACHE = 'apatch_mgr_upd_cache_v1';
+    const LS_BIG = 'apatch_mgr_big';          // 弹窗是否放大（记住用户选择）
+    const LS_LOG = 'apatch_mgr_log_v1';       // 插件操作日志（最多存最近 80 条）
+    const LOG_MAX = 300;                      // 内存里最多保留多少条
+    const LOG_OUT_MAX = 1500;                 // 单条输出最多留多少字符（超长留尾部）
+    const UPD_TTL = 6 * 60 * 60 * 1000;   // 更新检查结果缓存 6 小时
+
+    /* ============================== 小工具 =============================== */
+    const el = (sel, root) => (root || document).querySelector(sel);
+    const esc = (s) => String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+        .replace(/\n/g, '<br>');
+    const shQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+    const isTrue = (v) => v === true || v === 'true' || v === 1 || v === '1';
+    const validId = (id) => (typeof id === 'string' && /^[a-zA-Z0-9._-]{1,64}$/.test(id)) ? id : null;
+    const out = (res) => String((res && res.content) || '').replace(/\r/g, '').trim();
+
+    /* ============================== 操作日志 ============================== */
+    // 插件执行过的每条 root 命令 + 输出都记下来（安装失败时最关键：apd 的报错在 stderr，
+    // 只有带 2>&1 的命令才会进这里）。内存最多 LOG_MAX 条，最近 80 条落 localStorage，
+    // 刷新页面也不丢，方便「复制」出来排查。
+    const trimOut = (s) => {
+        const t = String(s == null ? '' : s);
+        return t.length > LOG_OUT_MAX ? `…（前 ${t.length - LOG_OUT_MAX} 字省略）\n` + t.slice(-LOG_OUT_MAX) : t;
+    };
+
+    let LOG_OPEN = false;           // 日志面板是否展开（面板只显示插件自己的操作日志）
+    const LOG = (() => {
+        try { const a = JSON.parse(localStorage.getItem(LS_LOG) || '[]'); return Array.isArray(a) ? a : []; }
+        catch (e) { return []; }
+    })();
+    const saveLog = () => { try { localStorage.setItem(LS_LOG, JSON.stringify(LOG.slice(-80))); } catch (e) { } };
+    const addLog = (tag, cmd, ok, outText) => {
+        LOG.push({ t: Date.now(), tag, cmd: String(cmd == null ? '' : cmd).slice(0, 400), ok: !!ok, out: trimOut(outText) });
+        while (LOG.length > LOG_MAX) LOG.shift();
+        saveLog();
+        if (LOG_OPEN && typeof renderLog === 'function') renderLog();
+    };
+    let renderLog = null;           // 在 UI 部分赋值
+
+    const run = async (cmd, timeout, quiet) => {
+        const t0 = Date.now();
+        let res;
+        try {
+            res = await runShellWithRoot(cmd, timeout || 30000);
+            if (!res || typeof res !== 'object') res = { success: false, content: '' };
+        } catch (e) {
+            res = { success: false, content: '', error: String(e) };
+        }
+        if (!quiet) addLog('cmd', cmd, res.success, (out(res) || res.error || '') + (res.success ? '' : `\n[exit≠0 / ${Date.now() - t0}ms]`));
+        return res;
+    };
+
+    /* ============================ HTTP（走设备 curl） ===================== */
+    let _curlBin = null;
+    const curlBin = async () => {
+        if (_curlBin) return _curlBin;
+        const r = out(await run(`[ -x ${CURL_BIN} ] && echo yes || echo no`));
+        _curlBin = r.includes('yes') ? CURL_BIN : 'curl';
+        return _curlBin;
+    };
+
+    const httpGetText = async (url, maxTime) => {
+        const t = maxTime || 15;
+        const bin = await curlBin();
+        let txt = out(await run(`${bin} -sL --max-time ${t} -A 'Mozilla/5.0 (Linux; Android)' ${shQuote(url)}`, t * 1000 + 8000));
+        if (txt) return txt;
+        if (bin !== 'curl') {
+            txt = out(await run(`curl -sL --max-time ${t} -A 'Mozilla/5.0 (Linux; Android)' ${shQuote(url)}`, t * 1000 + 8000));
+            if (txt) return txt;
+        }
+        txt = out(await run(`${BUSYBOX} wget -q -O - ${shQuote(url)}`, t * 1000 + 8000));
+        return txt;
+    };
+
+    /* ============================== 版本读取 ============================= */
+    const hexToVer = (hex) => {
+        const v = parseInt(hex, 16);
+        if (!v || isNaN(v)) return null;
+        return `${(v >> 16) & 0xff}.${(v >> 8) & 0xff}.${v & 0xff}`;
+    };
+
+    // KernelPatch 版本：KernelPatch 超级命令 `truncate <superkey|su> version`
+    // 输出 "内核hex,KPhex"（如 50a0a,d09 → 内核 5.10.10 / KP 0.13.9）
+    // root(uid 0) 默认就在 KernelPatch 的 su 白名单里（su_add_allow_uid(0)），
+    // 所以新版 APatch（校验管理器签名、不强制 SuperKey）也能直接读，无需任何密码。
+    const KP_VER_RE = /([0-9a-fA-F]{2,10})\s*,\s*([0-9a-fA-F]{1,8})/;
+
+    const readKernelPatchVer = async () => {
+        const sk = (localStorage.getItem(LS_SUPERKEY) || '').trim();
+        const cmds = [];
+        if (sk) cmds.push(`truncate ${shQuote(sk)} version`);
+        cmds.push('truncate su version', `/system/bin/truncate su version`);
+        for (const cmd of cmds) {
+            for (let i = 0; i < 2; i++) {          // 偶发取不到时重试一次
+                const r = out(await run(cmd, 8000));
+                if (r) {
+                    const m = r.match(KP_VER_RE);
+                    if (m) {
+                        const ver = hexToVer(m[2]);
+                        if (ver) return { ver, kernel: hexToVer(m[1]), source: 'supercmd' };
+                    }
+                    break;                          // 有输出但格式不符，不再重试
+                }
+            }
+        }
+        // 回退 1：KernelPatch 启动日志（bootlog 里含 "KernelPatch Version: xxx"）
+        const bootlog = out(await run(sk ? `truncate ${shQuote(sk)} bootlog` : 'truncate su bootlog', 8000));
+        const mb = bootlog.match(/KernelPatch Version:\s*([0-9a-fA-F]+)/i);
+        if (mb) {
+            const ver = hexToVer(mb[1]);
+            if (ver) return { ver, kernel: null, source: 'bootlog' };
+        }
+        // 回退 2：late-load / LKM 模式下内核日志里的 KernelPatch
+        const d = out(await run(`dmesg 2>/dev/null | grep -i -m1 'KernelPatch'`, 8000));
+        const mkp = d.match(/version[: ]+([0-9a-fA-F]{1,10})/i);
+        const mkv = d.match(/kernel[: ]+([0-9a-fA-F]{4,10})/i);
+        if (mkp) {
+            const ver = hexToVer(mkp[1]);
+            if (ver) return { ver, kernel: mkv ? hexToVer(mkv[1]) : null, source: 'dmesg' };
+        }
+        return { ver: null, kernel: null, source: null };
+    };
+
+    const readKpBuildTime = async () => {
+        const sk = (localStorage.getItem(LS_SUPERKEY) || '').trim();
+        const r = out(await run(sk ? `truncate ${shQuote(sk)} buildtime` : `truncate su buildtime`, 8000));
+        if (!r || /invalid|error|denied|not found/i.test(r)) return '';
+        return r.length > 80 ? r.slice(0, 80) : r;
+    };
+
+    // APatch 版本：apd -V 给版本号；管理器包的 versionName 与 APatch 版本名一致
+    const readApatchVer = async () => {
+        const apdOut = out(await run(`${APD} -V 2>/dev/null`, 8000));
+        const code = (apdOut.match(/\d+/) || [])[0] || '';
+        // apd -V 形如 "apd 11224"；部分构建还带版本名，拿不到管理器 versionName 时兜底用
+        let name = (apdOut.replace(/\d+.*$/, '').replace(/^apd\s*/i, '').trim()) || '';
+        const pkgRaw = out(await run(`pm list packages 2>/dev/null | grep -i apatch | head -n 1`, 15000));
+        const pkg = (pkgRaw.split(':').pop() || 'me.bmax.apatch').trim() || 'me.bmax.apatch';
+        const vRaw = out(await run(`dumpsys package ${pkg} 2>/dev/null | grep -m1 -i versionName`, 15000));
+        const m = vRaw.match(/versionName=([^\s]+)/i);
+        if (m) name = m[1];
+        return { code, name, installed: !!code };
+    };
+
+    const readEnvInfo = async () => {
+        const r = await run(`uname -r; echo; getprop ro.build.version.release; echo; uname -m`, 8000);
+        const lines = out(r).split('\n').map((s) => s.trim()).filter(Boolean);
+        return { kernel: lines[0] || '', android: lines[1] || '', arch: lines[2] || '' };
+    };
+
+    /* ============================== 模块读取 ============================= */
+    const normalize = (o) => {
+        const id = validId(String((o && o.id) || '').trim());
+        if (!id) return null;
+        return {
+            id,
+            name: String(o.name || id).trim(),
+            version: String(o.version || '').trim(),
+            versionCode: parseInt(o.versionCode || '0', 10) || 0,
+            author: String(o.author || '').trim(),
+            description: String(o.description || '').trim(),
+            updateJson: String(o.updateJson || '').trim(),
+            enabled: o.enabled === undefined ? true : isTrue(o.enabled),
+            hasUpdate: isTrue(o.update),  // 新版本已落盘、待重启生效
+            remove: isTrue(o.remove),     // 已标记卸载、待重启移除
+            action: isTrue(o.action),
+            web: isTrue(o.web)
+        };
+    };
+
+    const listModules = async () => {
+        const raw = out(await run(`${APD} module list 2>/dev/null`, 25000));
+        if (raw.startsWith('[')) {
+            try {
+                const arr = JSON.parse(raw);
+                if (Array.isArray(arr)) return arr.map(normalize).filter(Boolean);
+            } catch (e) { /* 输出被截断，走 shell 兜底 */ }
+        }
+        return listModulesByShell();
+    };
+
+    // apd 不可用/JSON 解析失败时的兜底：直接读 /data/adb/modules/*/module.prop
+    const listModulesByShell = async () => {
+        const ids = out(await run(`ls -1 ${MODULE_DIR} 2>/dev/null`, 10000))
+            .split('\n').map((s) => s.trim()).filter(Boolean);
+        const list = [];
+        for (const id of ids) {
+            if (!validId(id)) continue;
+            const dir = `${MODULE_DIR}/${id}`;
+            const hasProp = out(await run(`[ -f ${dir}/module.prop ] && echo yes`, 8000));
+            if (!hasProp.includes('yes')) continue;
+            const rec = out(await run(
+                `timeout 2s awk -F= '{ k=$1; v=substr($0, length(k)+2);
+                    if(k=="name")n=v; else if(k=="version")ver=v; else if(k=="versionCode")vc=v;
+                    else if(k=="author")au=v; else if(k=="description")de=v; else if(k=="updateJson")uj=v }
+                    END{ printf "%s|%s|%s|%s|%s|%s", n, ver, vc, au, de, uj }' ${dir}/module.prop`, 10000));
+            const p = rec.split('|');
+            const flags = out(await run(
+                `f=''; [ -f ${dir}/disable ] && f="$f d"; [ -f ${dir}/remove ] && f="$f r"; ` +
+                `[ -f ${dir}/update ] && f="$f u"; [ -f ${dir}/action.sh ] && f="$f a"; echo "$f"`, 10000));
+            list.push(normalize({
+                id, name: p[0], version: p[1], versionCode: p[2], author: p[3], description: p[4], updateJson: p[5],
+                enabled: !flags.includes('d'), remove: flags.includes('r'), update: flags.includes('u'), action: flags.includes('a')
+            }));
+        }
+        return list.filter(Boolean);
+    };
+
+    /* ==================== 暂存区（modules_update）读取 ==================== */
+    // APatch 的安装是两段式：apd 把新模块解到 /data/adb/modules_update/<id>，
+    // 下次开机 post-fs-data 阶段由 handle_updated_modules() rename 进 /data/adb/modules。
+    const listStaged = async () => (out(await run(`ls -1 ${MODULE_UPDATE_DIR} 2>/dev/null`, 10000)) || '')
+        .split('\n').map((x) => x.trim()).filter((x) => validId(x));
+
+    const readUptime = async () => {
+        const t = out(await run(`timeout 2s awk '{print int($1)}' /proc/uptime`, 8000));
+        const n = parseInt(t, 10);
+        return isNaN(n) ? 0 : n;
+    };
+
+    /* ============================ 模块更新检查 =========================== */
+    const loadCache = () => { try { return JSON.parse(localStorage.getItem(LS_UPD_CACHE) || '{}') || {}; } catch (e) { return {}; } };
+    const saveCache = (c) => { try { localStorage.setItem(LS_UPD_CACHE, JSON.stringify(c)); } catch (e) { } };
+
+    const checkUpdates = async (modules, force) => {
+        const cache = loadCache();
+        const found = {};
+        for (const m of modules) {
+            if (!m.updateJson || !m.enabled || m.hasUpdate || m.remove) continue;
+            const c = cache[m.id];
+            if (!force && c && Date.now() - c.ts < UPD_TTL) {
+                if (c.hasUpdate) found[m.id] = c;
+                continue;
+            }
+            const txt = await httpGetText(m.updateJson, 12);
+            if (!txt) continue;                       // 拉取失败：不写缓存，下次再试
+            let info = { ts: Date.now(), hasUpdate: false };
+            try {
+                const j = JSON.parse(txt);
+                const vc = parseInt(j.versionCode, 10) || 0;
+                const zip = String(j.zipUrl || j.zip_url || '').trim();
+                if (vc > m.versionCode && zip) {
+                    info = {
+                        ts: Date.now(), hasUpdate: true, version: String(j.version || ''),
+                        versionCode: vc, zipUrl: zip, changelog: String(j.changelog || '').slice(0, 300)
+                    };
+                }
+            } catch (e) { /* 非标准 updateJson，忽略 */ }
+            cache[m.id] = info;
+            if (info.hasUpdate) found[m.id] = info;
+        }
+        saveCache(cache);
+        return found;
+    };
+
+    /* ============================== 状态 & UI ============================ */
+    const state = {
+        modules: [], updates: {}, ver: null, env: null, kp: { ver: null, kernel: null, source: null },
+        kpTime: '', busy: false, filter: '',
+        staged: [], uptimeMin: 0, stagedStuck: false
+    };
+
+    const setStatus = (html, color) => {
+        const box = el('#apm_status', state.el);
+        if (!box) return;
+        box.innerHTML = html || '';
+        box.style.color = color || 'var(--dark-text-color)';
+    };
+
+    const _confirm = {};
+    const confirmTwice = (key, tip) => {
+        const now = Date.now();
+        if (_confirm[key] && now - _confirm[key] < 4000) { delete _confirm[key]; return true; }
+        _confirm[key] = now;
+        createToast(tip, 'pink');
+        return false;
+    };
+
+    const apdCmd = (args, timeout) => run(`${APD} module ${args}`, timeout || 60000);
+
+    const invalidateCache = (id) => {
+        const c = loadCache();
+        if (c[id]) { delete c[id]; saveCache(c); }
+    };
+
+    /* ---------------------------- 版本区渲染 --------------------------- */
+    const renderVersions = () => {
+        const v = state.ver || {};
+        const e = state.env || {};
+        const set = (sel, html) => { const n = el(sel, state.el); if (n) n.innerHTML = html; };
+        const dim = (t) => `<span class="apm-dim">${esc(t)}</span>`;
+
+        set('#apm_ap_ver', v.installed
+            ? `${v.name ? esc(v.name) : '<span class="apm-dim">未知版本名</span>'} ${v.code ? dim(`(${v.code})`) : ''}`
+            : '<span class="apm-err">未检测到 APatch</span>');
+
+        set('#apm_kp_ver', state.kp.ver
+            ? `${esc(state.kp.ver)} ${['dmesg', 'bootlog'].includes(state.kp.source) ? dim(`(${state.kp.source})`) : ''}`
+            : '<span class="apm-err">读取失败</span>');
+
+        set('#apm_kernel', esc(state.kp.kernel || e.kernel || '未知'));
+        set('#apm_kp_time', state.kpTime ? esc(state.kpTime) : dim('—'));
+
+        const total = state.modules.length;
+        const off = state.modules.filter((m) => !m.enabled).length;
+        const staged = (state.staged || []).length;
+        const stagedTip = staged ? ` ${dim(`+${staged} 待重启`)}` : '';
+        set('#apm_mod_count', total
+            ? `${total} ${dim(`(启用 ${total - off} / 禁用 ${off})`)}${stagedTip}`
+            : (staged ? `0${stagedTip}` : '0'));
+
+        // 读不到 KP 版本时，给出 SuperKey 输入
+        const skBox = el('#apm_sk_box', state.el);
+        if (skBox) skBox.style.display = state.kp.ver ? 'none' : '';
+        const skInput = el('#apm_sk_input', state.el);
+        if (skInput && !skInput.value) skInput.value = localStorage.getItem(LS_SUPERKEY) || '';
+    };
+
+    /* ---------------------------- 模块区渲染 --------------------------- */
+    const modRow = (m) => {
+        const upd = state.updates[m.id];
+        const tags = [];
+        if (!m.enabled) tags.push('<span class="apm-tag apm-tag-off">已禁用</span>');
+        if (m.remove) tags.push('<span class="apm-tag apm-tag-rm">待卸载·重启后</span>');
+        if (m.hasUpdate) tags.push('<span class="apm-tag apm-tag-upd">新版本已装入·重启后生效</span>');
+        if (upd) tags.push(`<span class="apm-tag apm-tag-new">可更新 ${esc(upd.version || upd.versionCode)}</span>`);
+
+        const btns = [];
+        btns.push(`<button data-act="toggle">${m.enabled ? '禁用' : '启用'}</button>`);
+        if (upd) btns.push(`<button data-act="update" class="apm-primary">更新</button>`);
+        if (m.action && m.enabled) btns.push(`<button data-act="action">Action</button>`);
+        btns.push(m.remove
+            ? `<button data-act="undo">撤销卸载</button>`
+            : `<button data-act="uninstall" class="apm-danger">卸载</button>`);
+
+        return `
+        <div class="apm-mod" data-id="${esc(m.id)}">
+            <div class="apm-mod-main">
+                <div class="apm-mod-name">
+                    <span class="apm-name">${esc(m.name)}</span>
+                    ${m.version ? `<span class="apm-ver">v${esc(m.version)}</span>` : ''}
+                    ${tags.join('')}
+                </div>
+                <div class="apm-mod-sub">${esc(m.id)} · ${esc(m.author || '未知作者')} · versionCode ${m.versionCode}</div>
+                ${m.description ? `<div class="apm-mod-desc">${esc(m.description)}</div>` : ''}
+                ${upd && upd.changelog ? `<div class="apm-mod-desc apm-mod-log">更新日志：${esc(upd.changelog)}</div>` : ''}
+            </div>
+            <div class="apm-mod-btns">${btns.join('')}</div>
+        </div>`;
+    };
+
+    // 已暂存、等重启生效的模块行
+    const pendingRow = (id) => `
+        <div class="apm-mod apm-pending">
+            <div class="apm-mod-main">
+                <div class="apm-mod-name">
+                    <span class="apm-name">${esc(id)}</span>
+                    <span class="apm-tag apm-tag-upd">待重启应用</span>
+                </div>
+                <div class="apm-mod-sub">已暂存于 ${esc(MODULE_UPDATE_DIR)}，重启时由 apd 合并进 ${esc(MODULE_DIR)}</div>
+                ${state.stagedStuck ? `<div class="apm-mod-desc apm-mod-log">⚠️ 本次开机已 ${state.uptimeMin} 分钟仍未合并：说明开机阶段 apd 的 post-fs-data 没执行（APatch 未完整安装 / late-load 状态下会这样），去 APatch 管理器确认内核状态，或手动执行 ${esc(APD)} post-fs-data</div>` : ''}
+            </div>
+        </div>`;
+
+    const renderModules = () => {
+        const box = el('#apm_mod_list', state.el);
+        if (!box) return;
+        const kw = state.filter.trim().toLowerCase();
+        const list = state.modules.filter((m) => !kw
+            || m.name.toLowerCase().includes(kw)
+            || m.id.toLowerCase().includes(kw)
+            || m.description.toLowerCase().includes(kw));
+        const pending = kw ? [] : (state.staged || []).filter((id) => !list.some((m) => m.id === id));
+        if (!list.length && !pending.length) {
+            box.innerHTML = `<div class="apm-empty">${state.modules.length ? '没有匹配的模块' : '暂无模块'}</div>`;
+            return;
+        }
+        box.innerHTML = pending.map(pendingRow).join('') + list.map(modRow).join('');
+    };
+
+    /* ------------------------------- 刷新 ------------------------------ */
+    const refresh = async (forceUpdateCheck) => {
+        if (!state.el) return;
+        if (state.busy) return;
+        state.busy = true;
+        setStatus('正在读取 APatch 状态 …');
+        try {
+            // 顺序读取：UFI 的 root shell 并发跑多条命令时输出可能互相干扰
+            state.ver = await readApatchVer();
+            state.kp = await readKernelPatchVer();
+            state.env = await readEnvInfo();
+            state.kpTime = state.kp.ver ? await readKpBuildTime() : '';
+            renderVersions();
+
+            setStatus('正在读取模块列表 …');
+            state.modules = await listModules();
+            state.staged = await listStaged();
+            state.uptimeMin = Math.round((await readUptime()) / 60);
+            state.stagedStuck = state.staged.length > 0 && state.uptimeMin >= 3;
+            renderVersions();
+            renderModules();
+
+            setStatus('正在检查模块更新 …');
+            state.updates = await checkUpdates(state.modules, !!forceUpdateCheck);
+            renderModules();
+            addLog('note', '刷新完成', true,
+                `APatch=${state.ver.name || state.ver.code || '?'}  KernelPatch=${state.kp.ver || '未知'}(${state.kp.source || '-'})`
+                + `  内核=${state.kp.kernel || state.env.kernel || '?'}`
+                + `  模块=${state.modules.length} 暂存=${state.staged.length} 可更新=${Object.keys(state.updates).length}`);
+            const stagedN = state.staged.length;
+            setStatus(state.ver.installed
+                ? `就绪 · 共 ${state.modules.length} 个模块`
+                    + (stagedN ? ` · ${stagedN} 个待重启应用` : '')
+                    + (Object.keys(state.updates).length ? ` · ${Object.keys(state.updates).length} 个可更新` : '')
+                    + (state.stagedStuck ? ' · <span class="apm-err">暂存模块开机未被合并</span>' : '')
+                : '<span class="apm-err">未检测到 APatch（/data/adb/apd 不存在）</span>');
+        } catch (e) {
+            setStatus(`刷新失败：${esc(String(e && e.message || e))}`, '#ff6b6b');
+        } finally {
+            state.busy = false;
+        }
+    };
+
+    /* ============================== 操作实现 ============================ */
+    const doToggle = async (m) => {
+        if (state.busy) return createToast('有操作正在进行，请稍候', 'pink');
+        state.busy = true;
+        const act = m.enabled ? 'disable' : 'enable';
+        setStatus(`正在${m.enabled ? '禁用' : '启用'} <b>${esc(m.name)}</b> …`);
+        const res = await apdCmd(`${act} ${shQuote(m.id)}`, 30000);
+        state.busy = false;
+        const err = out(res);
+        if (res.success && !/error|failed/i.test(err)) {
+            createToast(`${m.enabled ? '已禁用' : '已启用'}：${esc(m.name)}`, 'green');
+        } else {
+            createToast(`操作失败：${esc((err || '未知错误').slice(0, 120))}`, 'red');
+        }
+        await refresh(false);
+    };
+
+    const doUninstall = async (m) => {
+        if (!confirmTwice('rm_' + m.id, `⚠️ 再次点击「卸载」确认卸载：${esc(m.name)}`)) return;
+        if (state.busy) return createToast('有操作正在进行，请稍候', 'pink');
+        state.busy = true;
+        setStatus(`正在卸载 <b>${esc(m.name)}</b> …`);
+        const res = await apdCmd(`uninstall ${shQuote(m.id)}`, 60000);
+        state.busy = false;
+        const err = out(res);
+        if (err && /error|failed/i.test(err)) {
+            createToast(`卸载失败：${esc(err.slice(0, 120))}`, 'red');
+        } else {
+            createToast(`已标记卸载：${esc(m.name)}，重启后移除（可点「撤销卸载」取消）`, 'green', 6000);
+        }
+        invalidateCache(m.id);
+        await refresh(false);
+    };
+
+    const doUndoUninstall = async (m) => {
+        if (state.busy) return createToast('有操作正在进行，请稍候', 'pink');
+        state.busy = true;
+        setStatus(`正在撤销卸载 <b>${esc(m.name)}</b> …`);
+        const res = await apdCmd(`undo-uninstall ${shQuote(m.id)}`, 30000);
+        state.busy = false;
+        const err = out(res);
+        if (err && /error|failed/i.test(err)) createToast(`撤销失败：${esc(err.slice(0, 120))}`, 'red');
+        else createToast(`已撤销卸载：${esc(m.name)}`, 'green');
+        await refresh(false);
+    };
+
+    const doAction = async (m) => {
+        if (state.busy) return createToast('有操作正在进行，请稍候', 'pink');
+        state.busy = true;
+        setStatus(`正在执行 <b>${esc(m.name)}</b> 的 Action …`);
+        const res = await apdCmd(`action ${shQuote(m.id)}`, 120000);
+        state.busy = false;
+        const txt = out(res);
+        setStatus(`<div class="apm-out">${esc(txt.slice(-600) || '已执行（无输出）')}</div>`);
+        createToast(`Action 已执行：${esc(m.name)}`, 'green');
+    };
+
+    const downloadZip = async (url, dst) => {
+        setStatus(`正在下载安装包 …<br><span class="apm-dim">${esc(url.slice(0, 90))}</span>`);
+        const bin = await curlBin();
+        await run(`${bin} -sL --max-time 180 -o ${shQuote(dst)} ${shQuote(url)}`, 200000);
+        let ok = out(await run(`[ -s ${shQuote(dst)} ] && echo ok`, 10000)).includes('ok');
+        if (!ok) {
+            await run(`${BUSYBOX} wget -q -O ${shQuote(dst)} ${shQuote(url)}`, 200000);
+            ok = out(await run(`[ -s ${shQuote(dst)} ] && echo ok`, 10000)).includes('ok');
+        }
+        return ok;
+    };
+
+    const installZip = async (zipPath, label) => {
+        const name = label || zipPath.split('/').pop() || 'módulo';
+
+        // 预检 1：zip 根目录必须有 module.prop —— APatch 就是靠它判定“这是不是模块”
+        const listing = out(await run(`${BUSYBOX} unzip -l ${shQuote(zipPath)} 2>&1 | head -n 200`, 40000));
+        if (listing && !/applet not found|No such file|not found/i.test(listing)) {
+            const hasProp = listing.split('\n').some((l) => /(^|\s)module\.prop\s*$/.test(l.trim()));
+            if (!hasProp) {
+                setStatus(`<div class="apm-out">${esc(listing.slice(0, 700))}</div>`);
+                createToast('这个 zip 根目录没有 module.prop，APatch 不会把它当模块（常见原因：压缩时把模块文件夹又套了一层）', 'red', 9000);
+                return false;
+            }
+        }
+
+        // 预检 2：记录安装前暂存区，安装后用它核对是否真的落盘
+        const before = await listStaged();
+        addLog('note', `▶ 安装 ${name}`, true, `zip: ${zipPath}\n安装前 modules_update: ${before.join(', ') || '(空)'}`);
+
+        setStatus(`正在安装模块 <b>${esc(name)}</b> …（可能需要十几秒）`);
+        // 2>&1 很关键：apd 的报错全在 stderr，不合并就会「看起来成功」
+        const res = await run(`${APD} module install ${shQuote(zipPath)} 2>&1`, 240000);
+        const txt = out(res);
+
+        const after = await listStaged();
+        const stagedNew = after.filter((x) => !before.includes(x));
+        const ranInstaller = txt.includes('- Running module installer');
+        const blocked = /❌|Installation Blocked|Installation Failed/i.test(txt);
+        const fatal = /Failed to install module script|invalid module id|module\.prop not found|not found in module\.prop|Android is Booting|Is a directory|No such file/i.test(txt);
+        const ok = !blocked && !fatal && (stagedNew.length > 0 || ranInstaller);
+
+        setStatus(`<div class="apm-out">${esc((txt || '（apd 无输出）').slice(-700))}</div>`);
+
+        if (ok) {
+            state.staged = after;
+            const id = stagedNew[0];
+            addLog('note', `✔ 安装成功：${id || name}`, true, `安装后 modules_update: ${after.join(', ') || '(空)'}`);
+            createToast(id
+                ? `已暂存模块 ${esc(id)}，重启后由 apd 合并生效`
+                : `已安装：${esc(name)}（重启后生效）`, 'green', 8000);
+        } else {
+            const err = (txt.match(/Error:[^\n]*/i) || [])[0] || 'apd 未返回可识别信息';
+            addLog('note', `✘ 安装失败：${name}`, false, `判据：stagedNew=${stagedNew.length} ranInstaller=${ranInstaller} blocked=${blocked} fatal=${fatal}\n${txt}`);
+            createToast(`安装失败：${esc(err.slice(0, 160))} —— 点右上「日志 ▸ 插件操作」看完整输出`, 'red', 10000);
+        }
+        await refresh(false);
+        return ok;
+    };
+
+    const doUpdate = async (m, upd) => {
+        if (!upd || !upd.zipUrl) return createToast('未获取到更新地址', 'red');
+        if (!confirmTwice('upd_' + m.id, `再次点击「更新」确认：${esc(m.name)} → ${esc(upd.version || upd.versionCode)}`)) return;
+        if (state.busy) return createToast('有操作正在进行，请稍候', 'pink');
+        state.busy = true;
+        const dst = `${TMP_DIR}/apm_upd_${m.id}.zip`;
+        const ok = await downloadZip(upd.zipUrl, dst);
+        if (!ok) {
+            state.busy = false;
+            setStatus('');
+            return createToast('安装包下载失败', 'red');
+        }
+        state.busy = false;
+        await installZip(dst, `${m.name} ${upd.version || ''}`);
+    };
+
+    /* ------------------------ 上传 / 直链 安装 ------------------------- */
+    const installFromUpload = async (file) => {
+        if (!file) return;
+        if (!/\.zip$/i.test(file.name)) return createToast('请选择 .zip 模块安装包', 'red');
+        if (state.busy) return createToast('有操作正在进行，请稍候', 'pink');
+        state.busy = true;
+        setStatus(`正在上传 <b>${esc(file.name)}</b> …`);
+        let uploaded = null;
+        try {
+            uploaded = await uploadFileKano(file, true);
+        } catch (e) { uploaded = null; }
+        if (!uploaded) {
+            state.busy = false;
+            setStatus('');
+            return createToast('上传失败', 'red');
+        }
+        const src = `/data/data/com.minikano.f50_sms/files/uploads/${uploaded}`;
+        const dst = `${TMP_DIR}/apm_upload_${Date.now()}.zip`;
+        const cp = out(await run(`cp ${shQuote(src)} ${shQuote(dst)} && chmod 644 ${shQuote(dst)} && [ -s ${shQuote(dst)} ] && echo ok`, 30000));
+        if (!cp.includes('ok')) {
+            state.busy = false;
+            setStatus('');
+            return createToast('安装包转移到 /data/local/tmp 失败', 'red');
+        }
+        state.busy = false;
+        await installZip(dst, file.name);
+    };
+
+    const installFromUrl = async (url) => {
+        if (!/^https?:\/\//i.test(url)) return createToast('请输入 http(s) 开头的 zip 直链', 'red');
+        if (!confirmTwice('url_install', `再次点击「下载并安装」确认：${esc(url.slice(0, 60))}`)) return;
+        if (state.busy) return createToast('有操作正在进行，请稍候', 'pink');
+        state.busy = true;
+        const dst = `${TMP_DIR}/apm_url_${Date.now()}.zip`;
+        const ok = await downloadZip(url, dst);
+        state.busy = false;
+        if (!ok) { setStatus(''); return createToast('下载失败', 'red'); }
+        await installZip(dst, url.split('/').pop());
+    };
+
+    /* ================================ UI =============================== */
+    // 隐藏的文件选择器
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = '.zip,application/zip,application/octet-stream';
+    fileInput.style.display = 'none';
+    fileInput.onchange = async () => {
+        const f = fileInput.files && fileInput.files[0];
+        fileInput.value = '';
+        if (f) await installFromUpload(f);
+    };
+    document.body.appendChild(fileInput);
+
+    const openModal = async () => {
+        if (!(await checkAdvancedFunc())) return createToast('请先启用高级功能', 'pink');
+        el('#' + DOC_ID)?.remove();
+
+        const { el: modalEl, id } = createModal({
+            name: DOC_ID,
+            title: '🩹 APatch 管理器',
+            maxWidth: '860px',
+            isMask: true,
+            showConfirm: false,
+            onClose: () => true,
+            contentStyle: 'display:flex;flex-direction:column;max-height:none;',
+            content: `
+            <style>
+                #${DOC_ID} .apm-wrap { display:flex; flex-direction:column; gap:8px; font-size:.7rem; max-height:64vh; }
+                #${DOC_ID} .apm-wrap.apm-big { max-height:78vh; }
+                #${DOC_ID} .apm-card { padding:8px 10px; border-radius:10px; background:rgba(255,255,255,.04); line-height:1.7; }
+                #${DOC_ID} .apm-grid { display:grid; grid-template-columns:auto 1fr auto 1fr; gap:1px 8px; }
+                #${DOC_ID} .apm-grid > div:nth-child(odd) { opacity:.72; white-space:nowrap; }
+                #${DOC_ID} .apm-dim { opacity:.6; font-size:.62rem; }
+                #${DOC_ID} .apm-err { color:#ff8080; }
+                #${DOC_ID} .apm-bar { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+                #${DOC_ID} .apm-bar button { font-size:.66rem; padding:4px 10px; }
+                #${DOC_ID} input.apm-input { flex:1 1 150px; min-width:110px; font-size:.66rem; padding:5px 8px;
+                    border-radius:8px; border:1px solid rgba(255,255,255,.12); background:transparent; color:inherit; }
+                #${DOC_ID} .apm-list { flex:1 1 auto; min-height:104px; overflow-y:auto; display:flex;
+                    flex-direction:column; gap:6px; padding-right:2px; }
+                #${DOC_ID} .apm-mod { display:flex; gap:8px; align-items:flex-start; flex-wrap:wrap;
+                    padding:7px 8px; border-radius:10px; background:rgba(255,255,255,.05); }
+                #${DOC_ID} .apm-mod-main { flex:1 1 52%; min-width:0; }
+                #${DOC_ID} .apm-mod-name { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+                #${DOC_ID} .apm-name { font-weight:700; font-size:.72rem; }
+                #${DOC_ID} .apm-ver { opacity:.7; }
+                #${DOC_ID} .apm-mod-sub { opacity:.55; font-size:.6rem; margin-top:2px; word-break:break-all; }
+                #${DOC_ID} .apm-mod-desc { opacity:.75; margin-top:3px; max-height:2.6em; overflow:hidden; }
+                #${DOC_ID} .apm-mod-log { color:#ffd479; }
+                #${DOC_ID} .apm-mod-btns { display:flex; flex-direction:row; flex-wrap:wrap; gap:5px; align-self:center; }
+                #${DOC_ID} .apm-mod-btns button { font-size:.62rem; padding:4px 8px; white-space:nowrap; }
+                #${DOC_ID} .apm-danger { color:#ff8080 !important; }
+                #${DOC_ID} .apm-primary { background:var(--dark-btn-color-active); }
+                #${DOC_ID} .apm-tag { padding:1px 6px; border-radius:6px; font-size:.58rem; border:1px solid rgba(255,255,255,.18); }
+                #${DOC_ID} .apm-tag-off { color:#ffb86b; border-color:#ffb86b66; }
+                #${DOC_ID} .apm-tag-rm { color:#ff8080; border-color:#ff808066; }
+                #${DOC_ID} .apm-tag-upd { color:#7fd4ff; border-color:#7fd4ff66; }
+                #${DOC_ID} .apm-tag-new { color:#8ef58e; border-color:#8ef58e66; }
+                #${DOC_ID} .apm-empty { opacity:.6; text-align:center; padding:14px 0; }
+                #${DOC_ID} .apm-pending { border:1px dashed #7fd4ff66; background:rgba(127,212,255,.06); }
+                #${DOC_ID} .apm-log-wrap { display:none; flex:1 1 auto; min-height:104px; overflow:auto;
+                    padding:6px 8px; border-radius:8px; background:rgba(0,0,0,.28); }
+                #${DOC_ID} .apm-log-wrap.on { display:block; }
+                #${DOC_ID} .apm-log { margin:0; font-size:.56rem; line-height:1.5; white-space:pre-wrap;
+                    word-break:break-all; font-family:ui-monospace,Menlo,Consolas,monospace; }
+                #${DOC_ID} #apm_status { font-size:.64rem; opacity:.9; word-break:break-all; flex:0 0 auto; }
+                #${DOC_ID} .apm-out { margin-top:4px; padding:6px; border-radius:8px; background:rgba(0,0,0,.25);
+                    max-height:120px; overflow:auto; font-size:.58rem; white-space:pre-wrap; }
+                #${DOC_ID} .apm-tip { opacity:.55; font-size:.58rem; line-height:1.5; flex:0 0 auto; }
+                #${DOC_ID} .apm-size-btn { font-size:.62rem !important; padding:2px 8px !important; margin:0 !important; }
+                @media (max-width: 560px) { #${DOC_ID} .apm-grid { grid-template-columns:auto 1fr; } }
+            </style>
+            <div class="apm-wrap">
+                <div class="apm-card">
+                    <div class="apm-grid">
+                        <div>APatch 版本</div><div id="apm_ap_ver">--</div>
+                        <div>KernelPatch 版本</div><div id="apm_kp_ver">--</div>
+                        <div>内核版本</div><div id="apm_kernel">--</div>
+                        <div>KP 构建时间</div><div id="apm_kp_time">--</div>
+                        <div>模块数量</div><div id="apm_mod_count">--</div>
+                    </div>
+                    <div id="apm_sk_box" style="display:none;margin-top:8px">
+                        <div class="apm-dim" style="margin-bottom:4px">
+                            版本是通过 KernelPatch 超级命令 <code>truncate su version</code> 读取的，root 默认就在 su 白名单里，
+                            <b>没有设置过 SuperKey 也不需要填</b>；仅当上面显示「读取失败」时才需要手动指定（留空即忽略，只存在本机浏览器）。
+                        </div>
+                        <div class="apm-bar">
+                            <input class="apm-input" id="apm_sk_input" placeholder="APatch SuperKey（可选，没设过就留空）">
+                            <button id="apm_sk_save">保存并重读</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="apm-bar">
+                    <button id="apm_btn_refresh">刷新</button>
+                    <button id="apm_btn_check">检查更新</button>
+                    <button id="apm_btn_upload">上传模块安装</button>
+                    <button id="apm_btn_url_toggle" title="通过 zip 直链安装模块">直链安装 ▾</button>
+                    <button id="apm_btn_reboot" class="apm-danger" title="暂存的模块要重启才会被 apd 合并">重启生效</button>
+                    <button id="apm_btn_log" title="查看插件操作日志（每条命令与完整输出）">日志 ▾</button>
+                </div>
+
+                <div class="apm-bar" id="apm_url_bar" style="display:none">
+                    <input class="apm-input" id="apm_url_input" placeholder="模块 zip 直链，https://…">
+                    <button id="apm_btn_url">下载并安装</button>
+                </div>
+
+                <div class="apm-bar">
+                    <input class="apm-input" id="apm_filter" placeholder="搜索模块名 / ID / 描述">
+                    <button id="apm_btn_disabled">只看禁用</button>
+                </div>
+
+                <div id="apm_status"></div>
+                <div class="apm-list" id="apm_mod_list"></div>
+
+                <div class="apm-bar" id="apm_log_bar" style="display:none">
+                    <span class="apm-dim">插件操作日志（含每条命令的完整输出）</span>
+                    <button id="apm_log_refresh">刷新</button>
+                    <button id="apm_log_copy">复制</button>
+                    <button id="apm_log_clear">清空</button>
+                </div>
+                <div class="apm-log-wrap" id="apm_log_panel"><pre class="apm-log" id="apm_log_text"></pre></div>
+
+                <div class="apm-tip">
+                    安装/更新/卸载都是两段式：先写入 <code>/data/adb/modules_update</code>，重启时由 apd 的 post-fs-data 合并进
+                    <code>/data/adb/modules</code>（上方列表以「待重启应用」标注）· 出错点右上「<b>日志</b>」看每条命令的完整输出
+                </div>
+            </div>`
+        });
+
+        state.el = modalEl;
+
+        // --- 弹窗尺寸：默认放大，右上角可切换（记住选择）---
+        const wrap = el('.apm-wrap', modalEl);
+        const sizeBtn = document.createElement('button');
+        sizeBtn.className = 'apm-size-btn';
+        const applySize = (big) => {
+            const inner = modalEl.querySelector('.modal') || modalEl;
+            inner.style.width = big ? '96%' : '90%';
+            inner.style.maxWidth = big ? '1280px' : '860px';
+            wrap && wrap.classList.toggle('apm-big', big);
+            sizeBtn.textContent = big ? '⤡ 缩小' : '⤢ 放大';
+            try { localStorage.setItem(LS_BIG, big ? '1' : '0'); } catch (e) { }
+        };
+        sizeBtn.onclick = () => applySize(!(wrap && wrap.classList.contains('apm-big')));
+        const titleBar = el('.title', modalEl);
+        if (titleBar) titleBar.appendChild(sizeBtn);
+        applySize(localStorage.getItem(LS_BIG) !== '0');   // 首次默认放大
+
+        // --- 事件绑定 ---
+        el('#apm_btn_refresh', modalEl).onclick = () => refresh(false);
+        el('#apm_btn_check', modalEl).onclick = async () => {
+            if (state.busy) return createToast('有操作正在进行，请稍候', 'pink');
+            const list = state.modules.length ? state.modules : await listModules();
+            state.modules = list;
+            setStatus('正在重新检查模块更新 …');
+            state.updates = await checkUpdates(list, true);
+            renderModules();
+            setStatus(`更新检查完成${Object.keys(state.updates).length ? ` · ${Object.keys(state.updates).length} 个可更新` : ' · 全部为最新'}`);
+        };
+        el('#apm_btn_upload', modalEl).onclick = () => {
+            if (!state.ver || !state.ver.installed) {
+                createToast('未检测到 APatch，无法安装模块', 'red');
+                return;
+            }
+            fileInput.click();
+        };
+        // --- 日志面板（只显示插件自己的操作日志）---
+        const logBar = el('#apm_log_bar', modalEl);
+        const logPanel = el('#apm_log_panel', modalEl);
+        const logText = el('#apm_log_text', modalEl);
+        const listBox = el('#apm_mod_list', modalEl);
+        const filterBarEl = el('#apm_filter', modalEl) ? el('#apm_filter', modalEl).closest('.apm-bar') : null;
+        const tipEl = el('.apm-tip', modalEl);
+
+        renderLog = () => {
+            if (!logText) return;
+            logText.textContent = LOG.length
+                ? LOG.map((e) => {
+                    const ts = new Date(e.t).toTimeString().slice(0, 8);
+                    const mark = e.tag === 'cmd' ? '$' : e.tag === 'note' ? '·' : '!';
+                    const head = `[${ts}] ${mark} ${e.cmd}${e.ok ? '' : '   ← 失败'}`;
+                    return e.out ? `${head}\n${e.out.split('\n').map((l) => '    ' + l).join('\n')}` : head;
+                }).join('\n')
+                : '（暂无操作日志，做一次刷新或安装就有了）';
+            if (logPanel) logPanel.scrollTop = logPanel.scrollHeight;
+        };
+
+        const setLogOpen = (open) => {
+            LOG_OPEN = open;
+            if (logBar) logBar.style.display = open ? 'flex' : 'none';
+            if (logPanel) logPanel.classList.toggle('on', open);
+            if (listBox) listBox.style.display = open ? 'none' : '';
+            if (filterBarEl) filterBarEl.style.display = open ? 'none' : 'flex';
+            if (tipEl) tipEl.style.display = open ? 'none' : '';
+            const btn = el('#apm_btn_log', modalEl);
+            if (btn) btn.textContent = open ? '日志 ▴' : '日志 ▾';
+            if (open) renderLog();
+        };
+
+        const copyLog = () => {
+            const text = (logText && logText.textContent) || '';
+            if (!text) return createToast('没有可复制的日志', 'pink');
+            const done = () => createToast('日志已复制，可直接粘贴发送', 'green');
+            const fallback = () => {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.left = '-9999px';
+                document.body.appendChild(ta);
+                ta.select();
+                try { document.execCommand('copy') ? done() : createToast('复制失败', 'red'); }
+                catch (e) { createToast('复制失败', 'red'); }
+                ta.remove();
+            };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(done).catch(fallback);
+            } else fallback();
+        };
+
+        const logBtn = el('#apm_btn_log', modalEl);
+        if (logBtn) logBtn.onclick = () => setLogOpen(!LOG_OPEN);
+        if (el('#apm_log_refresh', modalEl)) el('#apm_log_refresh', modalEl).onclick = () => renderLog();
+        if (el('#apm_log_copy', modalEl)) el('#apm_log_copy', modalEl).onclick = copyLog;
+        if (el('#apm_log_clear', modalEl)) el('#apm_log_clear', modalEl).onclick = () => {
+            LOG.length = 0;
+            saveLog();
+            renderLog();
+            createToast('操作日志已清空', 'pink');
+        };
+
+        let rebootN = 0, rebootT = null;
+        const rebootBtn = el('#apm_btn_reboot', modalEl);
+        if (rebootBtn) {
+            rebootBtn.onclick = async () => {
+                rebootN++;
+                rebootT && clearTimeout(rebootT);
+                if (rebootN < 3) {
+                    rebootT = setTimeout(() => { rebootN = 0; }, 4000);
+                    return createToast(`再点 ${3 - rebootN} 次确认重启设备`, 'pink');
+                }
+                rebootN = 0;
+                createToast('正在重启，模块将在开机 post-fs-data 阶段合并 …', 'pink', 5000);
+                await run('sync; reboot', 20000);
+            };
+        }
+
+        const urlBar = el('#apm_url_bar', modalEl);
+        const urlToggle = el('#apm_btn_url_toggle', modalEl);
+        if (urlBar && urlToggle) {
+            urlToggle.onclick = () => {
+                const show = urlBar.style.display === 'none';
+                urlBar.style.display = show ? 'flex' : 'none';
+                urlToggle.textContent = show ? '直链安装 ▴' : '直链安装 ▾';
+            };
+        }
+        el('#apm_btn_url', modalEl).onclick = () => installFromUrl((el('#apm_url_input', modalEl).value || '').trim());
+        el('#apm_sk_save', modalEl).onclick = async () => {
+            const v = (el('#apm_sk_input', modalEl).value || '').trim();
+            if (v) localStorage.setItem(LS_SUPERKEY, v);
+            else localStorage.removeItem(LS_SUPERKEY);
+            await refresh(false);
+        };
+        const filterEl = el('#apm_filter', modalEl);
+        filterEl.oninput = debounce(() => {
+            state.filter = filterEl.value || '';
+            renderModules();
+        }, 200);
+        el('#apm_btn_disabled', modalEl).onclick = () => {
+            filterEl.value = '';
+            state.filter = '';
+            const off = state.modules.filter((m) => !m.enabled);
+            const box = el('#apm_mod_list', modalEl);
+            box.innerHTML = off.length ? off.map(modRow).join('') : '<div class="apm-empty">没有已禁用的模块</div>';
+        };
+        el('#apm_mod_list', modalEl).addEventListener('click', async (e) => {
+            const btn = e.target.closest('button[data-act]');
+            if (!btn) return;
+            const row = btn.closest('.apm-mod');
+            if (!row) return;
+            const m = state.modules.find((x) => x.id === row.dataset.id);
+            if (!m) return;
+            switch (btn.dataset.act) {
+                case 'toggle': return doToggle(m);
+                case 'uninstall': return doUninstall(m);
+                case 'undo': return doUndoUninstall(m);
+                case 'update': return doUpdate(m, state.updates[m.id]);
+                case 'action': return doAction(m);
+            }
+        });
+
+        showModal(id);
+        await refresh(false);
+    };
+
+    /* ============================== 入口按钮 ============================ */
+    const mainBtn = document.createElement('button');
+    mainBtn.innerHTML = '🩹 APatch管理器';
+    mainBtn.onclick = () => openModal();
+
+    const actionsBar = document.querySelector('.functions-container .actions-buttons')
+        || document.querySelector('.actions-buttons');
+    if (actionsBar) actionsBar.appendChild(mainBtn);
+    else document.querySelector('.functions-container')?.insertAdjacentElement('afterend', mainBtn);
+})();
+//</script>
