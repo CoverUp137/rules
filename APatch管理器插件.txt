@@ -258,8 +258,10 @@
             if (!m.updateJson || !m.enabled || m.hasUpdate || m.remove) continue;
             const c = cache[m.id];
             if (!force && c && Date.now() - c.ts < UPD_TTL) {
-                if (c.hasUpdate) found[m.id] = c;
-                continue;
+                // 缓存结论必须跟「当前本地版本」再核一次：本地已经装上缓存记录的那个版本
+                // （或更高）就不算有更新，落到下面重新拉取，免得本地升级后还挂着旧结论
+                if (c.hasUpdate && c.versionCode > m.versionCode) { found[m.id] = c; continue; }
+                if (!c.hasUpdate) continue;
             }
             const txt = await httpGetText(m.updateJson, 12);
             if (!txt) continue;                       // 拉取失败：不写缓存，下次再试
