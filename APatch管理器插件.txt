@@ -15,7 +15,7 @@
  *   - 模块在线更新读取 module.prop 的 updateJson（Magisk/KernelSU 同一规范）
  *   - install / uninstall 都是 systemless 语义：写入 modules_update，重启后由 apd 合并生效
  *   - 安装结果不靠 apd 的 stdout 判断（错误全在 stderr）：命令带 2>&1，再核对 modules_update 是否真的多了模块目录
- *   - 内置「插件操作日志」面板：插件执行过的每条 root 命令+输出（自动持久化），可一键复制
+ *   - 内置「插件操作日志」面板：插件执行过的每条 root 命令+输出，只存内存不落盘（刷新页面即清空），可一键复制
  * ---------------------------------------------------------------------------
  */
 (async () => {
@@ -30,7 +30,7 @@
     const LS_SUPERKEY = 'apatch_mgr_superkey';
     const LS_UPD_CACHE = 'apatch_mgr_upd_cache_v1';
     const LS_BIG = 'apatch_mgr_big';          // 弹窗是否放大（记住用户选择）
-    const LS_LOG = 'apatch_mgr_log_v1';       // 插件操作日志（最多存最近 80 条）
+    const LS_LOG_LEGACY = 'apatch_mgr_log_v1'; // 旧版本曾把插件日志存这里，现在不持久化，启动时清掉
     const LOG_MAX = 300;                      // 内存里最多保留多少条
     const LOG_OUT_MAX = 1500;                 // 单条输出最多留多少字符（超长留尾部）
     const UPD_TTL = 6 * 60 * 60 * 1000;   // 更新检查结果缓存 6 小时
@@ -48,23 +48,20 @@
 
     /* ============================== 操作日志 ============================== */
     // 插件执行过的每条 root 命令 + 输出都记下来（安装失败时最关键：apd 的报错在 stderr，
-    // 只有带 2>&1 的命令才会进这里）。内存最多 LOG_MAX 条，最近 80 条落 localStorage，
-    // 刷新页面也不丢，方便「复制」出来排查。
+    // 只有带 2>&1 的命令才会进这里）。只存内存、最多 LOG_MAX 条，不写 localStorage ——
+    // 刷新/重开页面即清空；要留证据就当场点「复制」。
     const trimOut = (s) => {
         const t = String(s == null ? '' : s);
         return t.length > LOG_OUT_MAX ? `…（前 ${t.length - LOG_OUT_MAX} 字省略）\n` + t.slice(-LOG_OUT_MAX) : t;
     };
 
     let LOG_OPEN = false;           // 日志面板是否展开（面板只显示插件自己的操作日志）
-    const LOG = (() => {
-        try { const a = JSON.parse(localStorage.getItem(LS_LOG) || '[]'); return Array.isArray(a) ? a : []; }
-        catch (e) { return []; }
-    })();
-    const saveLog = () => { try { localStorage.setItem(LS_LOG, JSON.stringify(LOG.slice(-80))); } catch (e) { } };
+    const LOG = [];                      // 纯内存，不落盘
+    try { localStorage.removeItem(LS_LOG_LEGACY); } catch (e) { }   // 清掉旧版本遗留的持久化日志
+
     const addLog = (tag, cmd, ok, outText) => {
         LOG.push({ t: Date.now(), tag, cmd: String(cmd == null ? '' : cmd).slice(0, 400), ok: !!ok, out: trimOut(outText) });
         while (LOG.length > LOG_MAX) LOG.shift();
-        saveLog();
         if (LOG_OPEN && typeof renderLog === 'function') renderLog();
     };
     let renderLog = null;           // 在 UI 部分赋值
@@ -742,7 +739,7 @@
                 <div class="apm-list" id="apm_mod_list"></div>
 
                 <div class="apm-bar" id="apm_log_bar" style="display:none">
-                    <span class="apm-dim">插件操作日志（含每条命令的完整输出）</span>
+                    <span class="apm-dim">插件操作日志（含每条命令的完整输出，仅本次打开有效、不保存）</span>
                     <button id="apm_log_refresh">刷新</button>
                     <button id="apm_log_copy">复制</button>
                     <button id="apm_log_clear">清空</button>
@@ -810,7 +807,7 @@
                     const head = `[${ts}] ${mark} ${e.cmd}${e.ok ? '' : '   ← 失败'}`;
                     return e.out ? `${head}\n${e.out.split('\n').map((l) => '    ' + l).join('\n')}` : head;
                 }).join('\n')
-                : '（暂无操作日志，做一次刷新或安装就有了）';
+                : '（暂无操作日志：做一次刷新或安装就会有；日志只在内存里，刷新页面即清空）';
             if (logPanel) logPanel.scrollTop = logPanel.scrollHeight;
         };
 
@@ -852,7 +849,6 @@
         if (el('#apm_log_copy', modalEl)) el('#apm_log_copy', modalEl).onclick = copyLog;
         if (el('#apm_log_clear', modalEl)) el('#apm_log_clear', modalEl).onclick = () => {
             LOG.length = 0;
-            saveLog();
             renderLog();
             createToast('操作日志已清空', 'pink');
         };
